@@ -1,0 +1,5 @@
+# Made by the Claude Code engine when a mod is loaded in development; not part of the sources.
+.claude-plugin/types/
+
+# macOS
+.DS_Store

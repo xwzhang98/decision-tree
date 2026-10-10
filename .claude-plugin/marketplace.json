@@ -1,0 +1,14 @@
+{
+  "name": "decision-tree",
+  "description": "A Claude Code mod that records a project's decisions as a tree in a docked pane.",
+  "owner": {
+    "name": "decision-tree contributors"
+  },
+  "plugins": [
+    {
+      "name": "decision-tree",
+      "source": "./",
+      "description": "Records a project's decisions as a tree and shows it in a docked pane."
+    }
+  ]
+}
