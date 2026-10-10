@@ -4,7 +4,7 @@
 
 import { mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On, PaneOpenArgs, ToolSpec, CommandSpec, ProcessRunResult } from 'claude-code'
+import type { On, PaneOpenArgs, PromptOrigin, ToolSpec, CommandSpec, ProcessRunResult } from 'claude-code'
 
 import { defaultConfig, serializeConfig, withStatus } from '../lib/config'
 import { eventFileName, isoLocal } from '../lib/events'
@@ -19,6 +19,8 @@ export type World = {
   store: Map<string, unknown>
   tools: ToolSpec[]
   commands: CommandSpec[]
+  /** Every prompt that reached the bottom of the engine (the ones typed too), with where it came from. */
+  prompts: { text: string; origin: unknown }[]
   opens: PaneOpenArgs[]
   toasts: string[]
   invalidations: number
@@ -41,6 +43,7 @@ export function world(on: On, options: { cwd?: string; session?: string } = {}):
     store: new Map(),
     tools: [],
     commands: [],
+    prompts: [],
     opens: [],
     toasts: [],
     invalidations: 0,
@@ -56,7 +59,10 @@ export function world(on: On, options: { cwd?: string; session?: string } = {}):
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
-  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('prompt.submit', (_$, e) => {
+    w.prompts.push({ text: e.text, origin: e.origin })
+    return { text: e.text }
+  })
   on('prompt.compose', () => ({ sections: [{ id: 'base', text: 'You are a coding assistant.', scope: 'shared' as const }] }))
   on('ui.focus', () => ({}))
   on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Box' as const, props: {}, children: [] }))
@@ -238,6 +244,11 @@ export function compose($: Engine) {
 /** The person presses Enter on a prompt. */
 export function submit($: Engine, text: string) {
   return $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+}
+
+/** A prompt that does not come from the person's keyboard: another plugin's, a schedule's. */
+export function submitFrom($: Engine, text: string, origin: PromptOrigin) {
+  return $.prompt.submit({ text, wait: false, origin })
 }
 
 /** A new turn starts. */

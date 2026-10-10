@@ -17,7 +17,7 @@
 /plugin install decision-tree --marketplace xwzhang98/decision-tree
 ```
 
-然后在任何项目里对 Claude 说"从现在开始记录决定"（或运行 `/decide start`），用 `/tree` 打开 pane。详见[安装](#安装)和[开始使用](#开始使用)。
+然后在任何项目里运行 `/decide init`：Claude 会浏览项目、记下它的起点，pane 随之填起来（用 `/tree` 打开）。只想要一棵空树的话，对 Claude 说"从现在开始记录决定"，或运行 `/decide start`。详见[安装](#安装)和[开始使用](#开始使用)。
 
 ## 目录
 
@@ -47,6 +47,23 @@
 
 ## 安装
 
+### 从 GitHub 装
+
+```
+/plugin install decision-tree --marketplace xwzhang98/decision-tree
+```
+
+依次是：`Add marketplace?` 按 `y`；选 **Install for you (user scope)**，回车。出现 `Installed decision-tree. Plugin is now active.` 就装好了：当前 session 立刻生效，以后在这台机器上启动的每个 session 都会加载。
+
+不在交互界面里也可以用命令行：
+
+```bash
+claude plugin marketplace add xwzhang98/decision-tree
+claude plugin install decision-tree@decision-tree --scope user
+```
+
+想发布你自己的一份：把这个文件夹作为仓库根目录推上去（`.claude-plugin/marketplace.json` 已经写好），然后用 `/plugin install decision-tree --marketplace <owner>/<repo>`。
+
 ### 装到远程服务器（不打断正在跑的 session）
 
 远程服务器上的 session 可能正带着无人值守的长任务队列。**安装和调试都不要重启它们**：另开一个 Claude Code session 来装和试，其他正在跑的 session 不受影响（它们不会加载这个 mod，直到你下次重启它们）。
@@ -56,6 +73,8 @@
    ```bash
    rsync -a --exclude '.claude-plugin/types' decision-tree/ server:~/mods/decision-tree/
    ```
+
+   （服务器能访问 GitHub 的话，可以不拷文件，直接在那个新 session 里用上面的 GitHub 方式安装。）
 
 2. 在那个新开的 Claude Code session 里输入：
 
@@ -74,16 +93,6 @@ claude plugin marketplace add ~/mods/decision-tree
 claude plugin install decision-tree@decision-tree --scope user
 ```
 
-### 从 GitHub 装
-
-把这个文件夹作为仓库根目录推上去（`.claude-plugin/marketplace.json` 已经写好），然后：
-
-```
-/plugin install decision-tree --marketplace <owner>/<repo>
-```
-
-例如这个仓库：`/plugin install decision-tree --marketplace xwzhang98/decision-tree`。
-
 ### 只试一试，不安装
 
 ```bash
@@ -96,12 +105,15 @@ claude --plugin-dir ~/mods/decision-tree
 
 一个项目默认**不记录**：没有 `.claude/decisions/config.json` 时 mod 不写任何文件，system prompt 里只多一行（"如果用户要求开始记录决定，调用 decision_log_start"），模型只看得到 `decision_log_start` 这一个工具。
 
-开启记录有两种方式：
+开启记录有三种方式：
 
+- 运行 `/decide init [标题]`：开启记录，**并且**让 Claude 浏览项目、记下起点，见[从项目本身建立起点](#从项目本身建立起点)；
 - 在 prompt 里说"从现在开始记录决定"（英文 "start recording decisions from now" 也行），模型会调用 `decision_log_start`；
 - 或者自己运行 `/decide start [标题]`。
 
-开启后会：写 `config.json` 和一条 `start` 事件、注册其余六个工具（`decision_record`、`decision_update`、`decision_note`、`decision_tree`、`decision_new_tree`、`decision_use_tree`）、把 system prompt 里那一段换成完整版、由发起开启的这个 session 打开 pane（你用 `/decide start` 开启时，pane 还会拿到键盘；够宽才会画出来，见[前提](#前提)）。其他已经在这个项目里运行的 session 在 5 秒内会发现 `config.json` 出现，同样切到开启状态；它们的终端是 fullscreen 布局、且 `display.autoOpen` 为真时，也会各自打开一次 pane。
+后两种得到的是一棵空树。
+
+开启后会：写 `config.json` 和一条 `start` 事件、注册其余六个工具（`decision_record`、`decision_update`、`decision_note`、`decision_tree`、`decision_new_tree`、`decision_use_tree`）、把 system prompt 里那一段换成完整版、由发起开启的这个 session 打开 pane（你用 `/decide start` 开启时，pane 还会拿到键盘，用 `/decide init` 则不会，因为 Claude 马上就开始干活；够宽才会画出来，见[前提](#前提)）。其他已经在这个项目里运行的 session 在 5 秒内会发现 `config.json` 出现，同样切到开启状态；它们的终端是 fullscreen 布局、且 `display.autoOpen` 为真时，也会各自打开一次 pane。
 
 暂停和恢复：`/decide pause`、`/decide resume`。暂停期间模型的写工具返回"已暂停"，system prompt 那一段只剩一行"记录已暂停"；你自己用命令和 pane 手动改仍然可用。
 
@@ -112,12 +124,54 @@ claude --plugin-dir ~/mods/decision-tree
 !.claude/decisions/
 ```
 
+### 从项目本身建立起点
+
+`/decide init [标题]` 之于这个 mod，就像 `/init` 之于 Claude Code：不从一棵空树开始，而是让 Claude 先看一遍项目，把项目现在的位置记下来。
+
+```
+已开始记录 orders-api 的决定（数据在 .claude/decisions/）
+已请 Claude 浏览项目并记下起点；记录会陆续出现在 pane 里。
+```
+
+1. 记录还没开启时，mod 先开启它（和 `/decide start` 一样，只是 pane 不拿键盘）。
+2. 稍后它把一个任务交给 Claude，就像你自己打字发出的一样：看 README 和 docs、笔记、`CLAUDE.md` / `AGENTS.md`、决定记录（`docs/adr`、`DECISIONS.md`）、changelog、最近 30 个 commit 和 tag、主要的配置和清单文件、代码的目录结构。只是快速看一遍，大约十来次读取。
+3. Claude 用 `decision_record` 记下**起点**：主线的根（milestone，已采用），说明这个项目是什么、现在到哪了，用到的文件作为 `sources`。
+4. 然后在它下面，最多再记七条项目里已经明确做出的决定：文件里写明已定或在用的记 `adopted`，写明被放弃的备选记 `rejected`，列为下一步或仍待定的记 `planned` 或 `proposed`。每条都带来源；commit 或文档给出了日期的，带 `decidedAt`。不编造：文件里看不出来的就不记。
+5. 最后用两三句话说明记了什么、哪些看不出来。
+
+留下来的样子大致是这样（虚构项目的示例，Claude 可能会记成这样）：
+
+```
+决策树 · orders-api                       记录中 · 6 个决定 · 12:00 更新
+────────────────────────────────────────────────────────────────────────
+主线  订单 API：v1 已上线
+────────────────────────────────────────────────────────────────────────
+❯ ✓ 订单 API：v1 已上线                                            03-14
+  ├ ✓ 存储用 PostgreSQL                                            01-20
+  ├ ✗ 存储用 MongoDB                                               01-20
+  ├ ✓ 对外用 REST，不用 GraphQL                                    02-03
+  ├ ○ 订单处理改为异步 worker                                       计划
+  └ ◌ 在网关做限流                                                  提议
+────────────────────────────────────────────────────────────────────────
+▾ 订单 API：v1 已上线                             ✓ 采用 · model · 03-14
+  基于 PostgreSQL 的 REST 服务，3 月上线
+  来源  README.md  CHANGELOG.md
+────────────────────────────────────────────────────────────────────────
+k: ↑  j: ↓  Enter 展开  e: 编辑  p: 只看待定  h: 隐藏否决         警告 0
+a: 全部
+```
+
+它不改你项目里的任何文件（`.claude/decisions/` 里的记录除外），不运行项目的代码，不启动任务，也会跳过 `.env` 这类机密文件。它只通过普通的 `decision_record` 工具写入，所以记下的每一条都和别的节点一样：可以在 pane 里编辑，用 `/decide status` 改正，或用 `/decide retract` 撤掉。它是对模型的一个请求，不是一个程序：记下什么取决于项目文件里写了什么、模型怎么读，所以请看一眼结果。读取项目走你 Claude Code 设置里通常的权限提示。
+
+`/decide init` 只给**空**树建起点。树里已经有决定时，它会说一声然后什么都不做（想在空树里跑，用 `/decide new <名字> --empty` 开一棵）；记录暂停时，它会请你先 `/decide resume`。这个任务会在 session 空下来之后自己开一个 turn，所以 Claude 正忙时，它要等当前 turn 结束。记录用的语言：`display.language` 固定了就用它；`auto` 时，你打过中文就写中文，否则用你写的语言（Claude 看不出来时用英文）。任务的措辞在 `lib/init.ts`。
+
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
 | `/tree` | 打开或切到 pane，并让 pane 拿到键盘。屏幕放不下 pane 时，把树以文本返回 |
-| `/decide start [标题]` | 手动开启 |
+| `/decide init [标题]` | 开启记录，**并且**让 Claude 浏览项目、记下起点，见[从项目本身建立起点](#从项目本身建立起点) |
+| `/decide start [标题]` | 手动开启，得到一棵空树 |
 | `/decide pause`、`/decide resume` | 暂停、恢复 |
 | `/decide status <id> <状态>` | 改状态，例：`/decide status v22-adopted adopted`。状态可以写 id、英文名或中文名（`采用`、`否决`、`进行中`…） |
 | `/decide note <id> <文字>` | 加备注 |
@@ -544,7 +598,7 @@ type Evidence = {
 ## 语言
 
 - 技术名词（run 名、`db_pool_cap`、`P99`、`seed`、命令名…）永远保留英文。
-- 界面固定文字、命令和工具的回执跟随你**最近一次的输入**：含 CJK 字符就是中文，有至少 6 个英文字母且没有中文就是英文；以 `/` 开头的输入和太短的输入不改变语言。结果按项目存进 `$.store`，下次打开这个项目时先用上次的，再没有就用英文。
+- 界面固定文字、命令和工具的回执跟随你**最近一次的输入**：含 CJK 字符就是中文，有至少 6 个英文字母且没有中文就是英文；以 `/` 开头的输入和太短的输入不改变语言。只有你自己的话才算数：来自通知、定时任务、另一个 session 或另一个插件的 prompt（`/decide init` 交给 Claude 的那个任务也算）说明不了你用什么语言写作。结果按项目存进 `$.store`，下次打开这个项目时先用上次的，再没有就用英文。
 - `config.json` 里 `display.language` 为 `"zh"` 或 `"en"` 时固定，不跟随输入（`/decide lang zh|en|auto`）。
 - 模型写进决定的标题、摘要、理由跟随你的输入语言；**已记录的节点内容永远不翻译**。
 - 给模型看的 system prompt 那一段是英文的（模型读的），其中写明了上一条规则。
@@ -568,7 +622,7 @@ type Evidence = {
 ```bash
 claude plugin validate  <folder>     # 清单、marketplace、hooks 模块
 tsc -p <folder>                      # 类型检查（mod 加载过一次后，.claude-plugin/types 才会生成）
-claude plugin test      <folder>     # 335 个测试：单元、pane（terminal/desktop/vscode/mobile 四种界面）、引擎级连线
+claude plugin test      <folder>     # 355 个测试：单元、pane（terminal/desktop/vscode/mobile 四种界面）、引擎级连线
 ```
 
 代码结构：
@@ -583,7 +637,7 @@ lib/tree.ts            排序、过滤、主线  lib/ops.ts   一次写入 = 校
                        新开 tree、切换、列出、看日志也在这里
 lib/versions.ts        "版本"怎么写、怎么解析（#N、时间、节点）
 lib/tools.ts           工具的 schema   lib/commands.ts /decide 的解析
-lib/prompt.ts          system prompt 那一段
+lib/prompt.ts          system prompt 那一段   lib/init.ts   /decide init 交给模型的任务
 lib/status.ts          状态命令输出的解析、过期判断、批准时命令的显示
 lib/width.ts spans.ts glyphs.ts layout.ts  显示宽度、截断换行、符号、pane 的版面（纯函数）
 lib/i18n.ts            中英文文案
@@ -600,7 +654,7 @@ tests/                 内存里的 FakeEngine + 引擎级测试
 
 一个典型的接入流程：
 
-1. **开启**：在项目的 Claude Code 里说"从现在开始记录决定"，或用 `/decide start <项目名>`。
+1. **开启**：在项目的 Claude Code 里运行 `/decide init <项目名>`，让 Claude 从项目本身找出起点（[从项目本身建立起点](#从项目本身建立起点)）；或者说"从现在开始记录决定"，或用 `/decide start <项目名>`，得到一棵空树。
 2. **种子数据（可选）**：已经做过的决定，另外整理成一个节点数组（格式见[导入种子数据](#导入种子数据)，每个节点加 `id`），放进项目（比如 `docs/decision_seed.json`），用 `/decide import docs/decision_seed.json` 导入。
 3. **状态命令（可选）**：写一个脚本（比如 `scripts/decision_status.sh`），读你的任务队列、日志里的步数等，按上面的[输出契约](#输出契约)往 stdout 打印 JSON；让 Claude Code 帮你写也行。然后在 `config.json` 里加：
 
@@ -621,7 +675,8 @@ tests/                 内存里的 FakeEngine + 引擎级测试
 - **状态命令只在 pane 显示着时运行**。
 - **"主线"** 取 `trunk: true` 的节点，按树的顺序列出（标题截断）。
 - **暂停期间**，只有模型的写工具被挡；你自己的命令和 pane 编辑照常。
-- **斜杠命令**（以 `/` 开头的输入）不参与语言判断。
+- **斜杠命令**（以 `/` 开头的输入）不参与语言判断，不是你自己写的 prompt（通知、定时任务、别的 session、别的插件）也不参与。
+- **`/decide init` 用 `$.prompt.submit` 交出它的任务**，作为你自己的话（`asUser`）。引擎会检查这个调用：在 `command.run` 钩子里调用会被拒绝（钩子占着那个 prompt 要等的 turn），文本以 `/` 开头也会被拒绝（会被当成命令执行）；所以任务的措辞不以 `/` 开头，并且在命令结束 250 毫秒后才提交；被拒绝时 1 秒后、再 3 秒后重试，仍然失败，或者另一个插件的钩子把它丢掉了，就弹一次提示。这个调用在它开启的那个 turn 开始时才返回，所以没有任何地方在等它。任务本身是无状态的：第一步读树，树里已经有决定就停，这也覆盖了连着运行两次 `/decide init` 的情况。
 - **额外的东西**：`decision_tree` 工具支持 `id` 取详情；`/decide lang`、`/decide autoopen`；`/decide import` 也接受 `{ "nodes": [...] }`；键位提示里 `k`/`j` 也能上下移动；选中行用 `❯` 标记。
 - **节点 id**：模型或命令没给 id 时，先由标题生成可读的 slug（`Use SQLite for cache` → `use-sqlite-for-cache`），标题里没有可用字符（比如全是中文）时才用 `d-<base36 时间戳>`；重复时加 `-2`、`-3`。这样 `/decide status <id> …` 手打起来更方便。
 - **事件序号**每个进程从 `0000` 开始；写文件前会检查同名文件是否存在，存在则序号加一。

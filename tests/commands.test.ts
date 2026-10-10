@@ -16,6 +16,16 @@ test('commands: bare /decide edits, and the simple verbs parse', () => {
   expect(parseDecide('frobnicate')).toEqual({ cmd: 'usage' })
 })
 
+test('commands: init takes the same optional title as start', () => {
+  expect(parseDecide('init')).toEqual({ cmd: 'init', title: '' })
+  expect(parseDecide('init orders-api-rewrite')).toEqual({ cmd: 'init', title: 'orders-api-rewrite' })
+  expect(parseDecide('INIT "my project"')).toEqual({ cmd: 'init', title: 'my project' })
+  expect(parseDecide('initialize')).toEqual({ cmd: 'init', title: '' })
+  expect(parseDecide('初始化 订单系统')).toEqual({ cmd: 'init', title: '订单系统' })
+  // (a word that only starts like it is not it)
+  expect(parseDecide('initial')).toEqual({ cmd: 'usage' })
+})
+
 test('commands: status takes an id or a title piece, and the status in either language', () => {
   expect(parseDecide('status v22-adopted adopted')).toEqual({ cmd: 'status', ref: 'v22-adopted', status: 'adopted' })
   expect(parseDecide('status 构建版本 采用')).toEqual({ cmd: 'status', ref: '构建版本', status: 'adopted' })
@@ -122,9 +132,11 @@ test('i18n: every status has a label in both languages and placeholders are fill
   expect(t('zh', 'pane.count.many', { n: 23 })).toBe('23 个决定')
   expect(t('en', 'pane.count.many', { n: 23 })).toBe('23 decisions')
   expect(t('en', 'pane.empty')).toBe(
-    "No decisions are being recorded in this project yet. Say 'start recording decisions from now' in a prompt, or run /decide start.",
+    "No decisions are being recorded in this project yet. Run /decide init to have Claude find the starting point, /decide start for an empty tree, or say 'start recording decisions from now' in a prompt.",
   )
-  expect(t('zh', 'pane.empty')).toBe("这个项目还没有开始记录决定。在 prompt 里说'从现在开始记录决定'，或用 /decide start。")
+  expect(t('zh', 'pane.empty')).toBe(
+    "这个项目还没有开始记录决定。运行 /decide init 让 Claude 自己找出起点，/decide start 从空树开始，或在 prompt 里说'从现在开始记录决定'。",
+  )
   expect(t('en', 'r.recorded', { id: 'a', parent: 'b' })).toBe('Recorded a (under b, {status})')
 })
 

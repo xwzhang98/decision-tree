@@ -13,6 +13,8 @@ import { parseDecide } from './commands'
 import type { Parsed } from './commands'
 import { MAIN, isStatus, shortSession } from './events'
 import { detectLanguage, t } from './i18n'
+import { initPrompt } from './init'
+import type { InitWrite } from './init'
 import type { Dollar } from './io'
 import { engineIo, isIgnoredByGit, projectIo } from './io'
 import { Journal, firstLine } from './journal'
@@ -39,6 +41,24 @@ export const SYNC_TIMEOUT_MS = 10_000
 /** Opening a tree copies every event file of the version it starts from: more than one read or write. */
 export const TREE_TIMEOUT_MS = 120_000
 const MAX_LISTED = 500
+/**
+ * How long after `/decide init` is done each attempt to hand the model its job is made, the first and then each retry
+ * (the engine refuses the prompt while the command that asks for it is still running).
+ */
+export const INIT_SEND_AFTER_MS: readonly number[] = [250, 1000, 3000]
+/** The origins of a prompt (`PromptOrigin['kind']`) that are a machine's or another party's words, not the person's own. */
+export const NOT_THE_PERSON: ReadonlySet<string> = new Set([
+  'plugin',
+  'task-notification',
+  'scheduled-trigger',
+  'peer',
+  'peer-send-message',
+  'projects-relay',
+  'coordinator',
+  'observer',
+  'observer-activity',
+  'auto-continuation',
+])
 /** What the model is told when it calls a tool of a project that is not being recorded. */
 const NOT_RECORDING = 'Decisions are not being recorded in this project. If the user wants that, call decision_log_start.'
 
@@ -541,9 +561,14 @@ export class Runtime {
     }
   }
 
-  /** The person sent a prompt: while the language is auto, follow the one it is written in. */
-  async onPrompt($: Dollar, text: string): Promise<void> {
+  /**
+   * A prompt arrived: while the language is auto, follow the one the person writes in. `origin` is where the engine says
+   * it came from; a notification, a schedule, another session or another plugin (this one's `/decide init` included) is
+   * not the person's own words, and says nothing about their language.
+   */
+  async onPrompt($: Dollar, text: string, origin?: string): Promise<void> {
     if (!this.ready) return
+    if (origin !== undefined && NOT_THE_PERSON.has(origin)) return
     await this.holds($)
     if (this.config?.display.language !== 'auto' && this.config !== null) return
     if (text.trimStart().startsWith('/')) return
@@ -632,15 +657,18 @@ export class Runtime {
     })
   }
 
-  /** Creates the record and switches this session on. Call inside `exclusive`. */
-  private async begin($: Dollar, actor: DtActor, title: string, rootTitle?: string, argv?: string[]): Promise<Done> {
+  /**
+   * Creates the record and switches this session on. The pane takes the keyboard when the person asked for
+   * the start (the default) and `focus` does not say otherwise. Call inside `exclusive`.
+   */
+  private async begin($: Dollar, actor: DtActor, title: string, rootTitle?: string, argv?: string[], focus: boolean = actor === 'user'): Promise<Done> {
     const ctx = await this.ctx($, actor)
     const done = await startRecord(ctx, { title, ...(rootTitle !== undefined ? { rootTitle } : {}), ...(argv !== undefined && argv.length > 0 ? { statusArgv: argv } : {}) })
     if (!done.ok) return done
     await this.readConfig()
     await this.applyMode($)
     await this.afterWrite($)
-    await this.openPane($, actor === 'user')
+    await this.openPane($, focus)
     const note = (await isIgnoredByGit($, this.root)) ? ` ${t(this.lang, 'r.gitignore')}` : ''
     return { ok: true, text: done.text + note, ...(done.id !== undefined ? { id: done.id } : {}) }
   }
@@ -767,6 +795,87 @@ export class Runtime {
     }, TREE_TIMEOUT_MS)
   }
 
+  /**
+   * `/decide init`: the person wants the first points of the tree found for them. Recording is switched on
+   * when it is off (the pane opens without taking the keyboard: the model is about to work), then the model
+   * is handed the job of looking through the project. Only an empty tree is set up; two inits in a row are
+   * caught by the job's own first step, which reads the tree before it records anything.
+   */
+  private async initCommand($: Dollar, title: string): Promise<string> {
+    const plan = await this.exclusive(async (): Promise<{ text: string; ask?: string }> => {
+      await this.refreshConfig($)
+      if (this.configError !== null) return { text: t(this.lang, 'pane.empty.config', { error: this.configError }) }
+      if (this.mode === 'paused') return { text: t(this.lang, 'c.initPaused') }
+      let head = ''
+      if (this.mode === 'off') {
+        const done = await this.begin($, 'user', title !== '' ? title : baseName(this.root), undefined, undefined, false)
+        if (!done.ok) return { text: done.error }
+        head = done.text
+      } else {
+        await this.syncJournal($)
+        const n = this.journal!.model().nodes.filter(node => node.retracted === undefined).length
+        if (n > 0) return { text: t(this.lang, 'c.initNotEmpty', { n }) }
+        // (a start opens the pane itself; here it may have been closed, and it is where the tree fills in)
+        await this.openPane($, false)
+      }
+      const name = title !== '' ? title : (this.config?.title ?? baseName(this.root))
+      return { text: head, ask: initPrompt({ title: name, write: this.initWrite() }) }
+    })
+    if (plan.ask === undefined) return plan.text
+    this.sendInit($, plan.ask)
+    const asked = t(this.lang, 'r.initAsked')
+    return plan.text === '' ? asked : `${plan.text} ${asked}`
+  }
+
+  /** What init asks the records to be written in: the language config.json fixes, or the one the person has been writing in. */
+  private initWrite(): InitWrite {
+    const fixed = this.config?.display.language
+    if (fixed === 'zh' || fixed === 'en') return fixed
+    // (nothing says an English `auto` was ever seen: the person may not have typed a word yet, so the model goes by what it knows of them)
+    return this.auto === 'zh' ? 'zh' : 'follow'
+  }
+
+  /**
+   * Hands the model init's job as the person's own words. The prompt starts a turn of its own once the session
+   * is idle, and the call answers when that turn starts, so nothing here waits for it. The engine refuses a
+   * prompt submitted from inside the command that asks for it (the command holds the turn the prompt would wait
+   * on), so the first attempt is made a moment after the command is done; a refusal is tried again later, and
+   * told in a toast when the last attempt fails too, or when another plugin's hook drops the prompt.
+   */
+  private sendInit($: Dollar, text: string): void {
+    const failed = (why: unknown): void => {
+      try {
+        $.ui.toast(t(this.lang, 'r.initFailed', { error: firstLine(why) }))
+      } catch {
+        // a toast that cannot be drawn changes nothing
+      }
+    }
+    const later = (k: number): void => {
+      try {
+        $.clock.after(INIT_SEND_AFTER_MS[k]!, () => attempt(k))
+      } catch (err) {
+        failed(err)
+      }
+    }
+    const again = (k: number, why: unknown): void => {
+      if (k + 1 < INIT_SEND_AFTER_MS.length) later(k + 1)
+      else failed(why)
+    }
+    const attempt = (k: number): void => {
+      try {
+        void $.prompt.submit({ text, asUser: true }).then(
+          res => {
+            if (res.drop !== undefined) failed(res.drop)
+          },
+          (why: unknown) => again(k, why),
+        )
+      } catch (err) {
+        again(k, err)
+      }
+    }
+    later(0)
+  }
+
   private missing(what: 'status' | 'node' | 'text' | 'title' | 'file' | 'value' | 'name'): string {
     const label: Record<typeof what, [string, string]> = {
       name: ['a tree name', 'tree 名'],
@@ -796,6 +905,8 @@ export class Runtime {
           const done = await this.begin($, 'user', cmd.title !== '' ? cmd.title : baseName(this.root))
           return done.ok ? done.text : done.error
         })
+      case 'init':
+        return this.initCommand($, cmd.title)
       case 'pause':
       case 'resume':
         return this.setRecording($, cmd.cmd === 'resume')

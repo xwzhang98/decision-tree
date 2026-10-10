@@ -829,9 +829,11 @@ test('pane: a project that is not being recorded shows the invitation in the rig
   const squash = (s: string) => s.replace(/\s+/g, '')
   const off = layoutPane(input({ project: projectOf({ mode: 'off', config: null }), model: modelOf([]) }))
   const zh = squash(textOf(off).slice(2).join(''))
-  expect(zh).toBe(squash("这个项目还没有开始记录决定。在 prompt 里说'从现在开始记录决定'，或用 /decide start。"))
+  expect(zh).toBe(squash("这个项目还没有开始记录决定。运行 /decide init 让 Claude 自己找出起点，/decide start 从空树开始，或在 prompt 里说'从现在开始记录决定'。"))
   const en = textOf(layoutPane(input({ lang: 'en', width: 200, project: projectOf({ mode: 'off', config: null }), model: modelOf([]) }))).join('\n')
-  expect(en.includes("No decisions are being recorded in this project yet. Say 'start recording decisions from now' in a prompt, or run /decide start.")).toBe(true)
+  expect(squash(en)).toContain(
+    squash("No decisions are being recorded in this project yet. Run /decide init to have Claude find the starting point, /decide start for an empty tree, or say 'start recording decisions from now' in a prompt."),
+  )
   expect(off.drawn).toEqual([])
   expect(off.selected).toBe(null)
   const bad = layoutPane(input({ project: projectOf({ mode: 'off', config: null, configError: 'config.json: unexpected token' }), model: modelOf([]) }))

@@ -30,6 +30,12 @@ export class FakeEngine {
   // ---- registrations and ui
   readonly tools: ToolSpec[] = []
   readonly commands: CommandSpec[] = []
+  /** The prompts the engine took from the mod (`$.prompt.submit`). */
+  readonly prompts: { text: string; asUser?: true }[] = []
+  /** How many times the mod called `$.prompt.submit`, the refused calls included. */
+  promptCalls = 0
+  /** What `$.prompt.submit` answers: a string drops the prompt (`{ drop }`), an Error rejects the call, null takes it. */
+  promptAnswer: string | Error | null = null
   readonly opens: PaneOpenArgs[] = []
   readonly toasts: { text: string; timeoutMs?: number }[] = []
   readonly focuses: { requestId: string; key: string }[] = []
@@ -178,6 +184,15 @@ export class FakeEngine {
           if (at >= 0) self.commands[at] = spec
           else self.commands.push(spec)
           return { command: spec.name }
+        },
+      },
+      prompt: {
+        submit: async input => {
+          self.promptCalls += 1
+          if (self.promptAnswer instanceof Error) throw self.promptAnswer
+          if (typeof self.promptAnswer === 'string') return { drop: self.promptAnswer }
+          self.prompts.push({ text: input.text, ...(input.asUser === true ? { asUser: true as const } : {}) })
+          return { text: input.text }
         },
       },
       tool: {

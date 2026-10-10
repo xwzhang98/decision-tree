@@ -25,6 +25,8 @@ export type Port = {
   }
   process: Pick<E['process'], 'run'>
   command: Pick<E['command'], 'register'>
+  /** Hands the model a prompt of its own, which starts a turn once the session is idle (`/decide init`). */
+  prompt: Pick<E['prompt'], 'submit'>
   tool: Pick<E['tool'], 'register'>
   ui: Pick<E['ui'], 'open' | 'panes' | 'focus' | 'toast'> & {
     /** Draws the pane again (its ages move with the clock). */

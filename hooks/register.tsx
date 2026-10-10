@@ -43,6 +43,7 @@ function portOf($: EngineInterface): Port {
     },
     process: { run: (argv, options) => $.process.run(argv, options) },
     command: { register: spec => $.command.register(spec) },
+    prompt: { submit: input => $.prompt.submit(input) },
     tool: { register: spec => $.tool.register(spec) },
     ui: {
       open: args => $.ui.open(args),
@@ -76,8 +77,8 @@ export const register: Register = on => {
     await $.command.register({ name: 'tree', description: 'Open the decision tree pane', immediate: true })
     await $.command.register({
       name: 'decide',
-      description: 'Record and edit decisions: start, pause, resume, status, note, add, retract, import, tree',
-      argumentHint: '[start|pause|resume|status|note|add|retract|import|tree] ...',
+      description: 'Record and edit decisions: init, start, pause, resume, status, note, add, retract, import, tree',
+      argumentHint: '[init|start|pause|resume|status|note|add|retract|import|tree] ...',
       immediate: true,
     })
     try {
@@ -118,10 +119,11 @@ export const register: Register = on => {
     return section === null ? composed : { ...composed, sections: [...composed.sections, section] }
   })
 
-  // the language the person writes in decides the language of the pane and the receipts
+  // the language the person writes in decides the language of the pane and the receipts (what a notification,
+  // a schedule or another plugin sends is not theirs: the runtime looks at where the prompt came from)
   on('prompt.submit', async ($, e, next) => {
     try {
-      await rt.onPrompt(portOf($), e.text)
+      await rt.onPrompt(portOf($), e.text, e.origin?.kind)
     } catch {
       // the language stays as it was
     }

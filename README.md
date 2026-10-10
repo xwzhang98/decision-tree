@@ -17,7 +17,7 @@ A general-purpose Claude Code mod that records the decisions made in a project a
 /plugin install decision-tree --marketplace xwzhang98/decision-tree
 ```
 
-Then, in any project, tell Claude "start recording decisions from now" (or run `/decide start`), and open the pane with `/tree`. Details are in [Installation](#installation) and [Getting started](#getting-started).
+Then, in any project, run `/decide init`: Claude looks through the project, records where it starts, and the pane fills in (open it with `/tree`). For an empty tree instead, tell Claude "start recording decisions from now" or run `/decide start`. Details are in [Installation](#installation) and [Getting started](#getting-started).
 
 ## Contents
 
@@ -105,12 +105,15 @@ It applies to that one session only, and reloads by itself when you edit the fil
 
 A project is **not recorded** by default. Without `.claude/decisions/config.json` the mod writes no file, the system prompt gets one extra line ("If the user asks to start recording this project's decisions …, call decision_log_start."), and the model sees only one tool, `decision_log_start`.
 
-There are two ways to turn recording on:
+There are three ways to turn recording on:
 
+- run `/decide init [title]`: it turns recording on **and** has Claude look through the project and record where it starts, see [Setting up from the project itself](#setting-up-from-the-project-itself);
 - say "start recording decisions from now" in a prompt (the Chinese "从现在开始记录决定" works too) and the model calls `decision_log_start`;
 - or run `/decide start [title]` yourself.
 
-Once on, the mod: writes `config.json` and a `start` event; registers the other six tools (`decision_record`, `decision_update`, `decision_note`, `decision_tree`, `decision_new_tree`, `decision_use_tree`); replaces the system-prompt section with the full version; and the session that turned it on opens the pane (when you turn it on with `/decide start` the pane also gets the keyboard; it only draws if there is room, see [Prerequisites](#prerequisites)). Other sessions already running in this project notice `config.json` within 5 seconds and switch to on as well; if their terminal uses the fullscreen layout and `display.autoOpen` is true, each of them opens the pane once.
+The last two begin with an empty tree.
+
+Once on, the mod: writes `config.json` and a `start` event; registers the other six tools (`decision_record`, `decision_update`, `decision_note`, `decision_tree`, `decision_new_tree`, `decision_use_tree`); replaces the system-prompt section with the full version; and the session that turned it on opens the pane (when you turn it on with `/decide start` the pane also gets the keyboard, with `/decide init` it does not, because Claude starts working at once; it only draws if there is room, see [Prerequisites](#prerequisites)). Other sessions already running in this project notice `config.json` within 5 seconds and switch to on as well; if their terminal uses the fullscreen layout and `display.autoOpen` is true, each of them opens the pane once.
 
 Pause and resume with `/decide pause` and `/decide resume`. While paused, the model's write tools answer "Not recorded: decision recording is paused", and the system-prompt section shrinks to one line saying recording is paused. Your own commands and manual edits in the pane still work.
 
@@ -121,12 +124,55 @@ If the project's `.gitignore` ignores `.claude/`, turning recording on prints "N
 !.claude/decisions/
 ```
 
+### Setting up from the project itself
+
+`/decide init [title]` is to this mod what `/init` is to Claude Code: instead of starting with an empty tree, Claude looks through the project and records where it stands.
+
+```
+Started recording decisions for orders-api (data in .claude/decisions/)
+Asked Claude to look through the project and record where it starts; the
+pane fills as it goes.
+```
+
+1. If recording is off, the mod turns it on (like `/decide start`, except that the pane does not take the keyboard).
+2. A moment later it hands Claude a task, as if you had typed it: look through the README and docs, notes, `CLAUDE.md` / `AGENTS.md`, decision records (`docs/adr`, `DECISIONS.md`), the changelog, the last 30 commits and the tags, the main config and manifest files and the layout of the code. A quick look, about a dozen reads.
+3. Claude records the **starting point** with `decision_record`: the root of the mainline (a milestone, adopted) saying what the project is and where it stands, with the files it used as `sources`.
+4. Then, under it, up to seven decisions the project has clearly already made: `adopted` for what the files say is decided or in use, `rejected` for alternatives they say were dropped, `planned` or `proposed` for what they list as next or still open. Each has its sources, and a `decidedAt` date when a commit or a document gives one. Nothing is invented: what the files do not show is left out.
+5. It ends with two or three sentences on what it recorded and what it could not tell.
+
+What it leaves behind looks like this (an example for a made-up project, as Claude might record it):
+
+```
+Decision tree · orders-api       Recording · 6 decisions · updated 12:00
+────────────────────────────────────────────────────────────────────────
+Mainline  Orders API: v1 in production
+────────────────────────────────────────────────────────────────────────
+❯ ✓ Orders API: v1 in production                                   03-14
+  ├ ✓ Use PostgreSQL for storage                                   01-20
+  ├ ✗ MongoDB for storage                                          01-20
+  ├ ✓ Serve a REST API, not GraphQL                                02-03
+  ├ ○ Move order processing to async workers                     Planned
+  └ ◌ Rate limiting at the gateway                              Proposed
+────────────────────────────────────────────────────────────────────────
+▾ Orders API: v1 in production                 ✓ Adopted · model · 03-14
+  REST service on PostgreSQL, live since March
+  Sources  README.md  CHANGELOG.md
+────────────────────────────────────────────────────────────────────────
+k: ↑  j: ↓  Enter expand  e: Edit  p: Pending                 Warnings 0
+h: Hide rejected  a: All
+```
+
+It changes no file in your project (the record in `.claude/decisions/` apart), runs none of the project's code, starts no jobs and skips secrets such as `.env` files. It writes only through the ordinary `decision_record` tool, so everything it records can be edited in the pane, corrected with `/decide status`, or taken back with `/decide retract`, like any other node. It is a request to the model, not a program: what it records depends on what the project's files say and how the model reads them, so look the result over. Reading the project goes through the usual permission prompts of your Claude Code settings.
+
+`/decide init` sets up an **empty** tree only. In a tree that already has decisions it says so and does nothing (`/decide new <name> --empty` opens an empty tree to run it in); while recording is paused it asks you to `/decide resume` first. The task starts a turn of its own once the session is idle, so if Claude is busy it waits until the current turn ends. The records are written in the language `display.language` fixes; with `auto` they are in Chinese once you have typed Chinese, and otherwise in the language you write in (English if Claude cannot tell). The wording of the task is in `lib/init.ts`.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `/tree` | Opens the pane (or switches to it) and gives it the keyboard. If the screen has no room for the pane, returns the tree as text |
-| `/decide start [title]` | Turn recording on by hand |
+| `/decide init [title]` | Turn recording on **and** have Claude look through the project and record where it starts, see [Setting up from the project itself](#setting-up-from-the-project-itself) |
+| `/decide start [title]` | Turn recording on by hand, with an empty tree |
 | `/decide pause`, `/decide resume` | Pause, resume |
 | `/decide status <id> <status>` | Change a status, e.g. `/decide status v22-adopted adopted`. A status can be written as its id, its English name or its Chinese name (`采用`, `否决`, `进行中`, …) |
 | `/decide note <id> <text>` | Add a note |
@@ -553,7 +599,7 @@ The command runs only while the pane is **showing** (it does not run when the pa
 ## Language
 
 - Technical terms (run names, `db_pool_cap`, `P99`, `seed`, command names …) always stay in English.
-- The fixed text of the interface and the receipts of commands and tools follow **your most recent input**: if it contains CJK characters it is Chinese; if it has at least 6 Latin letters and no Chinese it is English; input that starts with `/` and input that is too short do not change the language. The result is stored per project in `$.store`; the next time the project is opened the last one is used first, and with none it is English.
+- The fixed text of the interface and the receipts of commands and tools follow **your most recent input**: if it contains CJK characters it is Chinese; if it has at least 6 Latin letters and no Chinese it is English; input that starts with `/` and input that is too short do not change the language. Only your own words count: a prompt that comes from a notification, a scheduled task, another session or another plugin (the task `/decide init` hands Claude included) says nothing about the language you write in. The result is stored per project in `$.store`; the next time the project is opened the last one is used first, and with none it is English.
 - When `display.language` in `config.json` is `"zh"` or `"en"` the language is fixed and does not follow your input (`/decide lang zh|en|auto`).
 - The titles, summaries and rationales the model writes into decisions follow the language you write in; **recorded node content is never translated**.
 - The system-prompt section the model sees is in English (the model reads it), and it states the rule above.
@@ -577,7 +623,7 @@ The command runs only while the pane is **showing** (it does not run when the pa
 ```bash
 claude plugin validate  <folder>     # manifests, marketplace, hooks module
 tsc -p <folder>                      # type-check (.claude-plugin/types is generated once the mod has been loaded)
-claude plugin test      <folder>     # 335 tests: unit, pane (terminal/desktop/vscode/mobile surfaces), engine-level wiring
+claude plugin test      <folder>     # 355 tests: unit, pane (terminal/desktop/vscode/mobile surfaces), engine-level wiring
 ```
 
 Code layout:
@@ -592,7 +638,7 @@ lib/tree.ts            ordering, filtering, the mainline   lib/ops.ts   one writ
                        commands); opening and switching trees, listing them and showing the log live here too
 lib/versions.ts        how a "version" is written and parsed (#N, times, nodes)
 lib/tools.ts           the tools' schemas   lib/commands.ts   parsing of /decide
-lib/prompt.ts          the system-prompt section
+lib/prompt.ts          the system-prompt section   lib/init.ts   the task /decide init hands the model
 lib/status.ts          parsing the status command's output, staleness, showing the command at approval
 lib/width.ts spans.ts glyphs.ts layout.ts  display width, truncation and wrapping, symbols, the pane's layout (pure functions)
 lib/i18n.ts            Chinese and English text
@@ -609,7 +655,7 @@ Why there is a `Port`: the engine does not let `$` cross an import boundary (`$`
 
 A typical way to bring a project in:
 
-1. **Turn it on.** In the project's Claude Code say "start recording decisions from now", or use `/decide start <project name>`.
+1. **Turn it on.** In the project's Claude Code run `/decide init <project name>` and Claude finds the starting point in the project itself ([Setting up from the project itself](#setting-up-from-the-project-itself)); or say "start recording decisions from now", or use `/decide start <project name>`, for an empty tree.
 2. **Seed data (optional).** Put the decisions already made into a node array of their own (format in [Importing seed data](#importing-seed-data), each node with an `id`), keep it in the project (say `docs/decision_seed.json`), and import it with `/decide import docs/decision_seed.json`.
 3. **A status command (optional).** Write a script (say `scripts/decision_status.sh`) that reads your job queue, the step counts in your logs and so on, and prints JSON to stdout following the [output contract](#output-contract) above; you can ask Claude Code to write it for you. Then add to `config.json`:
 
@@ -630,7 +676,8 @@ The original design brief (numbers like `spec 9.2` in code comments are its sect
 - **The status command runs only while the pane is showing.**
 - **The "mainline"** is the nodes with `trunk: true`, listed in tree order (titles truncated).
 - **While paused**, only the model's write tools are blocked; your own commands and pane edits work as usual.
-- **Slash commands** (input that starts with `/`) take no part in language detection.
+- **Slash commands** (input that starts with `/`) take no part in language detection, and neither do prompts that are not the person's own (notifications, scheduled tasks, other sessions, other plugins).
+- **`/decide init` hands its task over with `$.prompt.submit`**, as the person's own words (`asUser`). The engine checks that call and refuses it from inside a `command.run` hook (the hook holds the turn the prompt would wait for) and when the text begins with `/` (it would run as a command), so the task is worded not to begin with one and is submitted 250 ms after the command is done; a refusal is tried again 1 s and then 3 s later, and told in a toast if it still fails or if another plugin's hook drops the prompt. The call answers when the turn it starts begins, so nothing waits for it. The task is stateless: its first step reads the tree and stops if it already has decisions, which also covers running `/decide init` twice in a row.
 - **Extras**: the `decision_tree` tool supports `id` for details; `/decide lang` and `/decide autoopen`; `/decide import` also accepts `{ "nodes": [...] }`; `k`/`j` also move up and down in the key hints; the selected row is marked with `❯`.
 - **Node ids**: when neither the model nor the command gives an id, a readable slug is made from the title first (`Use SQLite for cache` → `use-sqlite-for-cache`), and `d-<base36 timestamp>` is used only when the title has no usable characters (all Chinese, say); on a duplicate `-2`, `-3` is added. That makes `/decide status <id> …` easier to type by hand.
 - **Event sequence numbers** start from `0000` in each process; before writing a file the mod checks whether a file of the same name exists, and if it does the sequence number goes up by one.

@@ -17,7 +17,7 @@ const EN = {
   'pane.mainline': 'Mainline',
   'pane.warnings': 'Warnings {n}',
   'pane.empty':
-    "No decisions are being recorded in this project yet. Say 'start recording decisions from now' in a prompt, or run /decide start.",
+    "No decisions are being recorded in this project yet. Run /decide init to have Claude find the starting point, /decide start for an empty tree, or say 'start recording decisions from now' in a prompt.",
   'pane.empty.config': 'The decision record in this project cannot be read: {error}',
   'pane.noNodes': 'No decisions recorded yet.',
   'pane.noMatch': 'Nothing matches this filter. Press a to show everything.',
@@ -98,6 +98,8 @@ const EN = {
   'r.resumed': 'Decision recording resumed',
   'r.pausedBlock': 'Not recorded: decision recording is paused (the user can run /decide resume).',
   'r.gitignore': 'Note: .gitignore ignores .claude/, so these files will not reach git.',
+  'r.initAsked': 'Asked Claude to look through the project and record where it starts; the pane fills as it goes.',
+  'r.initFailed': 'Could not hand init to Claude ({error}). Ask it to look through the project and record its starting point.',
   'r.recorded': 'Recorded {id} (under {parent}, {status})',
   'r.recordedRoot': 'Recorded {id} (root, {status})',
   'r.updated': 'Updated {id}: {changes}',
@@ -123,9 +125,11 @@ const EN = {
 
   // commands
   'c.usage':
-    'Usage: /decide start [title] | pause | resume | status <id> <status> | note <id> <text> | add <title> --parent <id> [--status planned] | retract <id> <reason> | import <file> | tree [new <name> [--at <version>] [--from <tree>] [--empty] [--title <text>] | use <name> | log [N]]',
+    'Usage: /decide start [title] | init [title] | pause | resume | status <id> <status> | note <id> <text> | add <title> --parent <id> [--status planned] | retract <id> <reason> | import <file> | tree [new <name> [--at <version>] [--from <tree>] [--empty] [--title <text>] | use <name> | log [N]]',
   'c.notStarted': 'Decisions are not being recorded in this project. Run /decide start [title] first.',
   'c.alreadyStarted': 'Decisions are already being recorded here ({title}).',
+  'c.initPaused': 'Decision recording is paused, so init has nowhere to write. Run /decide resume first.',
+  'c.initNotEmpty': 'This tree already has decisions ({n}), and init only sets up an empty one. /decide new <name> --empty opens an empty tree.',
   'c.unknownNode': 'No node matches "{ref}". Use an id, or part of a title that matches one node.',
   'c.ambiguousNode': '"{ref}" matches several nodes: {ids}. Use an id.',
   'c.unknownStatus': 'Unknown status "{status}". Use one of: {list}.',
@@ -211,7 +215,7 @@ const ZH: Record<Key, string> = {
   'pane.now': '现在',
   'pane.mainline': '主线',
   'pane.warnings': '警告 {n}',
-  'pane.empty': "这个项目还没有开始记录决定。在 prompt 里说'从现在开始记录决定'，或用 /decide start。",
+  'pane.empty': "这个项目还没有开始记录决定。运行 /decide init 让 Claude 自己找出起点，/decide start 从空树开始，或在 prompt 里说'从现在开始记录决定'。",
   'pane.empty.config': '读不了这个项目的决定记录：{error}',
   'pane.noNodes': '还没有记录任何决定。',
   'pane.noMatch': '这个过滤下没有内容。按 a 显示全部。',
@@ -286,6 +290,8 @@ const ZH: Record<Key, string> = {
   'r.resumed': '决定记录已恢复',
   'r.pausedBlock': '未记录：决定记录已暂停（用户可以运行 /decide resume）。',
   'r.gitignore': '注意：.gitignore 忽略了 .claude/，这些文件不会进 git。',
+  'r.initAsked': '已请 Claude 浏览项目并记下起点；记录会陆续出现在 pane 里。',
+  'r.initFailed': '没能把 init 交给 Claude（{error}）。可以直接让它浏览项目并记下起点。',
   'r.recorded': '已记录 {id}（挂在 {parent} 下，{status}）',
   'r.recordedRoot': '已记录 {id}（根节点，{status}）',
   'r.updated': '已更新 {id}：{changes}',
@@ -310,9 +316,11 @@ const ZH: Record<Key, string> = {
   'r.untitled': '（无标题）',
 
   'c.usage':
-    '用法：/decide start [标题] | pause | resume | status <id> <状态> | note <id> <文字> | add <标题> --parent <id> [--status planned] | retract <id> <原因> | import <文件> | tree [new <名字> [--at <版本>] [--from <tree>] [--empty] [--title <文字>] | use <名字> | log [N]]',
+    '用法：/decide start [标题] | init [标题] | pause | resume | status <id> <状态> | note <id> <文字> | add <标题> --parent <id> [--status planned] | retract <id> <原因> | import <文件> | tree [new <名字> [--at <版本>] [--from <tree>] [--empty] [--title <文字>] | use <名字> | log [N]]',
   'c.notStarted': '这个项目还没有开始记录决定。先运行 /decide start [标题]。',
   'c.alreadyStarted': '这个项目已经在记录决定（{title}）。',
+  'c.initPaused': '决定记录已暂停，init 没有地方可写。先运行 /decide resume。',
+  'c.initNotEmpty': '这棵树已经有决定了（{n} 个），init 只用于空树。/decide new <名字> --empty 可以新开一棵空树。',
   'c.unknownNode': '没有节点匹配 "{ref}"。用 id，或者只匹配一个节点的标题片段。',
   'c.ambiguousNode': '"{ref}" 匹配多个节点：{ids}。请用 id。',
   'c.unknownStatus': '不认识的状态 "{status}"。可用：{list}。',

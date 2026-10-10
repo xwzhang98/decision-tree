@@ -7,6 +7,7 @@ import { isKind, isStatus } from './events'
 export type Parsed =
   | { cmd: 'edit' }
   | { cmd: 'start'; title: string }
+  | { cmd: 'init'; title: string }
   | { cmd: 'pause' }
   | { cmd: 'resume' }
   | { cmd: 'status'; ref: string; status: DtStatus }
@@ -174,6 +175,11 @@ export function parseDecide(args: string): Parsed {
 
     case 'start':
       return { cmd: 'start', title: unquote(rest) }
+
+    case 'init':
+    case 'initialize':
+    case '初始化':
+      return { cmd: 'init', title: unquote(rest) }
 
     case 'pause':
       return { cmd: 'pause' }
