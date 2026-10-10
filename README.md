@@ -1,376 +1,397 @@
 # decision-tree
 
-一个通用的 Claude Code mod：把一个项目里做过的决定记成一棵树，显示在终端界面右侧停靠的 pane 里。
+**English** | [简体中文](README.zh-CN.md)
 
-- 决定由 Claude 通过 mod 注册的工具自动记录，你可以用命令或在 pane 里手动改。
-- 数据放在项目文件夹里（`.claude/decisions/`），任何在该项目里启动的 session 读同一份、接着往下记；用 git 同步，不同机器上的树也同步。
-- 一个项目可以有多棵 tree：从当前版本，或指定的某个版本，新开一棵接着往下记（像 git 开分支），原来那棵不动，随时切回去，见[多棵 tree](#多棵-tree)。
-- 树上方有"现在"一栏：由项目自己配置的状态命令（输出 JSON）每 30 秒刷新，显示长任务的进度、预计时间和下一个关口。
-- 不含任何项目名、路径、集群名；项目相关的东西都在项目自己的 `config.json` 里。
-- 界面文字和回执跟随你输入的语言（有中文就中文，纯英文就英文），技术名词始终英文。
+A general-purpose Claude Code mod that records the decisions made in a project as a tree and shows it in a pane docked on the right of the terminal.
 
-## 目录
+- Decisions are recorded by Claude through tools the mod registers. You can also change them with commands, or by hand in the pane.
+- The data lives in the project folder (`.claude/decisions/`). Every session started in that project reads the same record and keeps adding to it; sync it with git and the tree follows you across machines.
+- A project can have several trees: open a new one from the current version, or from any earlier version, and keep recording there (like branching in git). The original stays untouched and you can switch back at any time. See [Multiple trees](#multiple-trees).
+- Above the tree there is a "Now" block: a status command that the project configures itself (it prints JSON) is refreshed every 30 seconds and shows the progress of long-running jobs, their estimated finish times and the next gate.
+- It contains no project names, paths or machine names. Everything specific to a project lives in that project's own `config.json`.
+- The interface text and the receipts follow the language you type in (Chinese if there is Chinese in it, English if it is plain English). Technical terms always stay in English.
 
-1. [前提](#前提)
-2. [安装](#安装)
-3. [开始使用](#开始使用)
-4. [命令](#命令)
-5. [多棵 tree](#多棵-tree)
-6. [界面](#界面)
-7. [Ghostty 和其他终端](#ghostty-和其他终端)
-8. [给模型的工具](#给模型的工具)
-9. [数据格式](#数据格式)
-10. ["现在"一栏和状态命令](#现在一栏和状态命令)
-11. [语言](#语言)
-12. [需要知道的行为](#需要知道的行为)
-13. [开发和测试](#开发和测试)
-14. [接入你自己的项目](#接入你自己的项目)
-15. [实现取舍与假设](#实现取舍与假设)
+**Quick start**
 
-## 前提
+```
+/plugin install decision-tree --marketplace xwzhang98/decision-tree
+```
 
-- 按 Claude Code **2.1.296** 的 mod API 写成（`claude plugin validate`、`tsc -p`、`claude plugin test` 都在这一版上通过）。mod API 每个版本都会变；换版本后先跑一遍 validate 和 test，见[开发和测试](#开发和测试)。
-- 终端用 fullscreen 布局时，pane 停靠在右侧，和 diff 面板以 tab 并存。宽度规则是引擎的：项目已开启时 mod **主动**打开 pane，终端要 ≥ 144 列才画出来（你用 `/tree` 打开过一次之后 110 列就够），更窄时先等着，终端拉宽后自动出现；你自己用 `/tree`、`/decide` 打开的，≥ 110 列停靠在右侧，更窄时画在输入框上方（见[需要知道的行为](#需要知道的行为)）。
-- 不依赖网络、不依赖任何外部程序；唯一会跑的外部命令是 `git rev-parse` / `git check-ignore`（找项目根、检查 `.gitignore`），以及你自己批准的状态命令。
+Then, in any project, tell Claude "start recording decisions from now" (or run `/decide start`), and open the pane with `/tree`. Details are in [Installation](#installation) and [Getting started](#getting-started).
 
-## 安装
+## Contents
 
-### 装到远程服务器（不打断正在跑的 session）
+1. [Prerequisites](#prerequisites)
+2. [Installation](#installation)
+3. [Getting started](#getting-started)
+4. [Commands](#commands)
+5. [Multiple trees](#multiple-trees)
+6. [The pane](#the-pane)
+7. [Ghostty and other terminals](#ghostty-and-other-terminals)
+8. [Tools for the model](#tools-for-the-model)
+9. [Data format](#data-format)
+10. [The "Now" block and the status command](#the-now-block-and-the-status-command)
+11. [Language](#language)
+12. [Behavior to know about](#behavior-to-know-about)
+13. [Development and tests](#development-and-tests)
+14. [Using it in your own project](#using-it-in-your-own-project)
+15. [Implementation notes and assumptions](#implementation-notes-and-assumptions)
+16. [Authors](#authors)
+17. [License](#license)
 
-远程服务器上的 session 可能正带着无人值守的长任务队列。**安装和调试都不要重启它们**：另开一个 Claude Code session 来装和试，其他正在跑的 session 不受影响（它们不会加载这个 mod，直到你下次重启它们）。
+## Prerequisites
 
-1. 把整个文件夹拷到服务器上，例如 `~/mods/decision-tree`：
+- Written against the mod API of Claude Code **2.1.296** (`claude plugin validate`, `tsc -p` and `claude plugin test` all pass on that version). The mod API changes with every version: after changing versions, run validate and test first, see [Development and tests](#development-and-tests).
+- With the fullscreen terminal layout the pane docks on the right and shares the space with the diff panel as tabs. The width rules belong to the engine. When a project is already recording, the mod opens the pane **on its own**, and it only draws once the terminal is at least 144 columns wide (110 is enough after you have opened it once with `/tree`); on a narrower terminal it waits and appears when you widen the window. A pane you open yourself with `/tree` or `/decide` docks on the right from 110 columns; on a narrower terminal it is drawn above the prompt (see [Behavior to know about](#behavior-to-know-about)).
+- It needs no network and no external program. The only external commands it runs are `git rev-parse` and `git check-ignore` (to find the project root and to check `.gitignore`), and the status command you have approved.
+
+## Installation
+
+### From GitHub
+
+```
+/plugin install decision-tree --marketplace xwzhang98/decision-tree
+```
+
+Claude Code asks `Add marketplace?`: press `y`, choose **Install for you (user scope)** and press Enter. When `Installed decision-tree. Plugin is now active.` appears it is installed: it takes effect in the current session at once, and every session you start on this machine from now on loads it.
+
+The same from the command line:
+
+```bash
+claude plugin marketplace add xwzhang98/decision-tree
+claude plugin install decision-tree@decision-tree --scope user
+```
+
+To publish your own copy, push this folder as the root of a repository (`.claude-plugin/marketplace.json` is already written) and use `/plugin install decision-tree --marketplace <owner>/<repo>`.
+
+### On a remote server (without interrupting running sessions)
+
+Sessions on a remote server may be carrying unattended, long-running job queues. **Do not restart them to install or debug**: open another Claude Code session to install and try the mod. The sessions that are already running are not affected (they do not load the mod until you restart them).
+
+1. Copy the whole folder to the server, for example to `~/mods/decision-tree`:
 
    ```bash
    rsync -a --exclude '.claude-plugin/types' decision-tree/ server:~/mods/decision-tree/
    ```
 
-2. 在那个新开的 Claude Code session 里输入：
+   (If the server can reach GitHub you can skip the copy and use the GitHub install above in that new session.)
+
+2. In that new Claude Code session type:
 
    ```
    /plugin install decision-tree --marketplace ~/mods/decision-tree
    ```
 
-   依次是：`Add marketplace?` 按 `y`；选 **Install for you (user scope)**，回车。出现 `Installed decision-tree. Plugin is now active.` 就装好了：当前 session 立刻生效，以后在这台机器上启动的每个 session 都会加载。
+   Press `y` at `Add marketplace?`, choose **Install for you (user scope)** and press Enter. When `Installed decision-tree. Plugin is now active.` appears it is installed: it takes effect in the current session at once, and every session you start on this machine from now on loads it.
 
-3. 以后改代码：直接编辑 `~/mods/decision-tree`，然后在 session 里 `/reload-plugins`。
+3. To change the code later, edit `~/mods/decision-tree` directly and run `/reload-plugins` in the session.
 
-不在交互界面里也可以用命令行：
+Outside the interactive UI you can use the command line:
 
 ```bash
 claude plugin marketplace add ~/mods/decision-tree
 claude plugin install decision-tree@decision-tree --scope user
 ```
 
-### 从 GitHub 装
-
-把这个文件夹作为仓库根目录推上去（`.claude-plugin/marketplace.json` 已经写好），然后：
-
-```
-/plugin install decision-tree --marketplace <owner>/<repo>
-```
-
-例如这个仓库：`/plugin install decision-tree --marketplace xwzhang98/decision-tree`。
-
-### 只试一试，不安装
+### Try it without installing
 
 ```bash
 claude --plugin-dir ~/mods/decision-tree
 ```
 
-只对这一个 session 生效，改文件后会自动重新加载。
+It applies to that one session only, and reloads by itself when you edit the files.
 
-## 开始使用
+## Getting started
 
-一个项目默认**不记录**：没有 `.claude/decisions/config.json` 时 mod 不写任何文件，system prompt 里只多一行（"如果用户要求开始记录决定，调用 decision_log_start"），模型只看得到 `decision_log_start` 这一个工具。
+A project is **not recorded** by default. Without `.claude/decisions/config.json` the mod writes no file, the system prompt gets one extra line ("If the user asks to start recording this project's decisions …, call decision_log_start."), and the model sees only one tool, `decision_log_start`.
 
-开启记录有两种方式：
+There are two ways to turn recording on:
 
-- 在 prompt 里说"从现在开始记录决定"（英文 "start recording decisions from now" 也行），模型会调用 `decision_log_start`；
-- 或者自己运行 `/decide start [标题]`。
+- say "start recording decisions from now" in a prompt (the Chinese "从现在开始记录决定" works too) and the model calls `decision_log_start`;
+- or run `/decide start [title]` yourself.
 
-开启后会：写 `config.json` 和一条 `start` 事件、注册其余六个工具（`decision_record`、`decision_update`、`decision_note`、`decision_tree`、`decision_new_tree`、`decision_use_tree`）、把 system prompt 里那一段换成完整版、由发起开启的这个 session 打开 pane（你用 `/decide start` 开启时，pane 还会拿到键盘；够宽才会画出来，见[前提](#前提)）。其他已经在这个项目里运行的 session 在 5 秒内会发现 `config.json` 出现，同样切到开启状态；它们的终端是 fullscreen 布局、且 `display.autoOpen` 为真时，也会各自打开一次 pane。
+Once on, the mod: writes `config.json` and a `start` event; registers the other six tools (`decision_record`, `decision_update`, `decision_note`, `decision_tree`, `decision_new_tree`, `decision_use_tree`); replaces the system-prompt section with the full version; and the session that turned it on opens the pane (when you turn it on with `/decide start` the pane also gets the keyboard; it only draws if there is room, see [Prerequisites](#prerequisites)). Other sessions already running in this project notice `config.json` within 5 seconds and switch to on as well; if their terminal uses the fullscreen layout and `display.autoOpen` is true, each of them opens the pane once.
 
-暂停和恢复：`/decide pause`、`/decide resume`。暂停期间模型的写工具返回"已暂停"，system prompt 那一段只剩一行"记录已暂停"；你自己用命令和 pane 手动改仍然可用。
+Pause and resume with `/decide pause` and `/decide resume`. While paused, the model's write tools answer "Not recorded: decision recording is paused", and the system-prompt section shrinks to one line saying recording is paused. Your own commands and manual edits in the pane still work.
 
-如果项目的 `.gitignore` 忽略了 `.claude/`，开启时会提示"这些文件不会进 git"。mod **不会**改 `.gitignore`。git 不能在被忽略的目录里再放行子路径，要让 `decisions/` 进 git，把 `.claude/` 改成：
+If the project's `.gitignore` ignores `.claude/`, turning recording on prints "Note: .gitignore ignores .claude/, so these files will not reach git." The mod **never edits `.gitignore`**. Git cannot re-include a path inside an ignored directory, so to get `decisions/` into git change `.claude/` to:
 
 ```
 .claude/*
 !.claude/decisions/
 ```
 
-## 命令
+## Commands
 
-| 命令 | 作用 |
+| Command | What it does |
 |---|---|
-| `/tree` | 打开或切到 pane，并让 pane 拿到键盘。屏幕放不下 pane 时，把树以文本返回 |
-| `/decide start [标题]` | 手动开启 |
-| `/decide pause`、`/decide resume` | 暂停、恢复 |
-| `/decide status <id> <状态>` | 改状态，例：`/decide status v22-adopted adopted`。状态可以写 id、英文名或中文名（`采用`、`否决`、`进行中`…） |
-| `/decide note <id> <文字>` | 加备注 |
-| `/decide add <标题> --parent <id> [--status planned]` | 手动新增。另有 `--kind decision\|protocol\|design\|milestone`、`--id <slug>`、`--trunk` |
-| `/decide retract <id> <原因>` | 撤掉一条记错的记录（和"决定被撤回"`withdrawn` 不同） |
-| `/decide import <文件>` | 导入一批节点，见[种子数据](#导入种子数据) |
-| `/decide new <名字> [--at <版本>] [--from <tree>] [--title <文字>] [--empty] [--stay]` | 新开一棵 tree：复制当前版本（或 `--at` 指定的版本）起步，并让项目切到它，见[多棵 tree](#多棵-tree) |
-| `/decide use <名字>` | 切到另一棵 tree（`main` 是第一棵） |
-| `/decide tree` | 列出这个项目的所有 tree、各自从哪里开出来、有多大 |
-| `/decide log [N]` | 当前 tree 最近 N 个事件（默认 12，最多 60），带编号：`#N` 就是可以用作 `--at` 的版本 |
-| `/decide`（不带参数） | 打开 pane，并进入当前选中节点的编辑 |
-| `/decide lang zh\|en\|auto` | 固定界面语言，或恢复自动（写进 `config.json`） |
-| `/decide autoopen on\|off` | 开启后是否自动打开 pane |
+| `/tree` | Opens the pane (or switches to it) and gives it the keyboard. If the screen has no room for the pane, returns the tree as text |
+| `/decide start [title]` | Turn recording on by hand |
+| `/decide pause`, `/decide resume` | Pause, resume |
+| `/decide status <id> <status>` | Change a status, e.g. `/decide status v22-adopted adopted`. A status can be written as its id, its English name or its Chinese name (`采用`, `否决`, `进行中`, …) |
+| `/decide note <id> <text>` | Add a note |
+| `/decide add <title> --parent <id> [--status planned]` | Add a node by hand. Also `--kind decision\|protocol\|design\|milestone`, `--id <slug>`, `--trunk` |
+| `/decide retract <id> <reason>` | Take back a record made by mistake (not the same as a decision being `withdrawn`) |
+| `/decide import <file>` | Import a batch of nodes, see [Importing seed data](#importing-seed-data) |
+| `/decide new <name> [--at <version>] [--from <tree>] [--title <text>] [--empty] [--stay]` | Open a new tree: it starts as a copy of the current version (or of the version `--at` names) and the project switches to it, see [Multiple trees](#multiple-trees) |
+| `/decide use <name>` | Switch to another tree (`main` is the first one) |
+| `/decide tree` | List the project's trees, where each was opened from, and how big each is |
+| `/decide log [N]` | The last N events of the current tree (default 12, at most 60), numbered: `#N` is a version you can use with `--at` |
+| `/decide` (no arguments) | Open the pane and start editing the selected node |
+| `/decide lang zh\|en\|auto` | Fix the interface language, or go back to automatic (written to `config.json`) |
+| `/decide autoopen on\|off` | Whether the pane opens by itself once recording is on |
 
-`<id>` 的位置也接受标题里唯一匹配的一段文字；有多个匹配时命令会列出候选 id。手动操作写出的事件 `actor` 是 `"user"`。命令返回一行回执。tree 的三个命令另有长写法 `/decide tree new|use|log`（`list` 同 `/decide tree`），`new` 也可以写 `fork`、`新建`、`新开`，`use` 也可以写 `switch`、`切换`。
+Wherever `<id>` is expected you can also give a piece of a title that matches exactly one node; if several match, the command lists the candidate ids. Events written by hand have `actor` `"user"`. A command returns a one-line receipt. The three tree commands also have a long form, `/decide tree new|use|log` (`list` is the same as `/decide tree`); `new` can also be written `fork`, `新建` or `新开`, and `use` can also be written `switch` or `切换`.
 
-## 多棵 tree
+## Multiple trees
 
-一个项目默认只有一棵 tree，叫 `main`。想换一条思路试（比如"前提不变，换第三种做法"），又不想弄乱原来的记录，就新开一棵：它从某个**版本**的 tree 复制起步，之后新记的决定只进新 tree，原来的 tree 保持原样，随时可以切回去。和 git 开分支是同一个想法。
-
-```
-/decide log                                  # 先看事件编号：#17 是第 17 个事件
-/decide new sql-v3                           # 以当前版本为 base
-/decide new sql-v3 --at #17                  # 以第 17 个事件之后的状态为 base
-/decide new sql-v3 --at v22-adopted          # 以记下 v22-adopted 那一刻的状态为 base
-/decide new sql-v3 --at "2026-10-08 17:44"   # 以那个时间点的状态为 base
-/decide new sql-v3 --title "SQL 第三版"      # 名字只能是字母、数字、连字符；中文说明放 --title
-/decide tree                                 # 列出所有 tree
-/decide use main                             # 切回 main
-```
-
-新开之后项目立刻切到新 tree：你、模型、其他 session 之后记的决定都进新 tree。下面是一个真实跑出来的小例子（数据是示意）：`main` 里有 `start` 加四个节点，用 `/decide new sql-v3 --at #4 --title "SQL 第三版"` 以前四个事件为 base 新开一棵，回执是
+A project has one tree by default, called `main`. When you want to try a different line of thought ("same premise, a third approach") without messing up the record you have, open a new tree. It starts as a copy of some **version** of a tree; everything recorded afterwards goes only into the new tree, and the original stays exactly as it was and can be switched back to at any time. It is the same idea as a branch in git.
 
 ```
-已新开 tree「sql-v3」，基于 main 的 #4（10-09 12:00）：3 个节点。现在记录到这里。
+/decide log                                  # look at the event numbers first: #17 is the 17th event
+/decide new sql-v3                           # base = the current version
+/decide new sql-v3 --at #17                  # base = the state after the 17th event
+/decide new sql-v3 --at v22-adopted          # base = the state at the moment v22-adopted was recorded
+/decide new sql-v3 --at "2026-10-08 17:44"   # base = the state at that point in time
+/decide new sql-v3 --title "SQL third try"   # a name takes letters, digits and hyphens only; a longer description goes in --title
+/decide tree                                 # list all trees
+/decide use main                             # switch back to main
 ```
 
-在新 tree 里又记了一个节点（`sql-plan-b`）之后，`/decide tree` 列出所有 tree（带标记的是正在记录的；下面是文本本身，行首是 `*`。命令的回执在对话里会被当成 markdown，行首的 `*` 画成 `-`，意思一样；模型的 `decision_tree` 工具拿到的就是 `*`），`/decide log` 看当前 tree 的事件：
+Once a tree is opened the project switches to it at once: decisions that you, the model and the other sessions record from then on go into the new tree. Here is a small example from a real run (the data is illustrative). `main` holds `start` plus four nodes; `/decide new sql-v3 --at #4 --title "SQL third try"` opens a tree based on the first four events, and the receipt is
 
 ```
-这个项目的 tree（正在记录到「sql-v3」）：
-  main    4 个节点，5 个事件
-* sql-v3  基于 main 的 #4（10-09 12:00） · 4 个节点，5 个事件 · "SQL 第三版"
+Opened tree sql-v3, from main at #4 (10-09 12:00): 3 nodes. Recording there now.
+```
+
+After one more node (`sql-plan-b`) is recorded in the new tree, `/decide tree` lists all trees (the marked one is where recording goes; what you see below is the text itself, with `*` at the start of the line. In the conversation a receipt is treated as markdown, which draws a leading `*` as `-`, with the same meaning; the model's `decision_tree` tool receives the `*`), and `/decide log` shows the current tree's events:
+
+```
+Trees in this project (recording in sql-v3):
+  main    4 nodes, 5 events
+* sql-v3  from main at #4 (10-09 12:00) · 4 nodes, 5 events · "SQL third try"
 ```
 
 ```
-Tree「sql-v3」：共 5 个事件（--at 里写 #N）：
-开出时基于 main 的 #4（10-09 12:00）
+Tree sql-v3: 5 events (use #N as --at):
+opened from main at #4 (10-09 12:00)
 #1  10-09 12:00  model   start
-#2  10-09 12:00  model   add design-v2 "design v2 定稿"
-#3  10-09 12:00  model   add pool-32 "pool 数维持 32"
-#4  10-09 12:00  model   add probe-s1-gate "闸门：probe s1 通过"
-#5  10-10 12:00  user    add sql-plan-b "SQL 方案 B"
+#2  10-09 12:00  model   add design-v2 "Design v2 final"
+#3  10-09 12:00  model   add pool-32 "Keep pool count at 32"
+#4  10-09 12:00  model   add probe-s1-gate "Gate: probe s1 passed"
+#5  10-10 12:00  user    add sql-plan-b "SQL plan B"
 ```
 
-### 选项
+### Options
 
-| 选项 | 含义 |
+| Option | Meaning |
 |---|---|
-| `--at <版本>`（也可写 `--version`） | 从哪个版本复制，写法见下表；不写就是当前版本 |
-| `--from <tree>` | 复制另一棵 tree，而不是当前所在的这棵（`/decide new sql-v4 --from main --at #3`） |
-| `--title <文字>` | 给这棵 tree 一句人看的说明（最多 120 个字符），显示在 pane 里和 `/decide tree` 里；名字放不下的中文说明都放这里 |
-| `--empty` | 空白 tree：不复制任何事件，只有一个 `start` |
-| `--stay` | 新开但不切过去，项目继续记录到原来的 tree；以后用 `/decide use <名字>` 再切 |
+| `--at <version>` (also `--version`) | Which version to copy; see the table below. Without it, the current version |
+| `--from <tree>` | Copy another tree instead of the one you are on (`/decide new sql-v4 --from main --at #3`) |
+| `--title <text>` | A human-readable description of the tree (at most 120 characters), shown in the pane and in `/decide tree`. Anything that does not fit in a name goes here |
+| `--empty` | A blank tree: no events are copied, it holds only a `start` |
+| `--stay` | Open it but do not switch: the project keeps recording into the original tree; switch later with `/decide use <name>` |
 
-名字是 2–32 个小写字母、数字、连字符。写了大写、空格、标点的，只要换成连字符就能成名字的，会自动换（`SQL v3` → `sql-v3`）；`main` 被占用；换不成的（比如全是中文）会拒绝并提示放进 `--title`。已经有的名字、不存在的 tree、看不懂的版本，都是一句话的拒绝，什么都不写。
+A name is 2–32 lowercase letters, digits and hyphens. If you write capitals, spaces or punctuation that turn into a valid name once replaced by hyphens, they are replaced automatically (`SQL v3` becomes `sql-v3`); `main` is taken; a name that cannot be made valid (all Chinese, say) is refused with a hint to put it in `--title`. A name that already exists, a tree that does not exist and a version that cannot be understood are each refused in one sentence, and nothing is written.
 
-### "版本"怎么写
+### Writing a version
 
-tree 的历史就是它的事件文件按文件名排好的顺序（见[数据格式](#数据格式)），**一个版本就是前 N 个事件**：
+A tree's history is its event files in file-name order (see [Data format](#data-format)), and **a version is simply the first N events**:
 
-| 写法 | 含义 |
+| Written as | Meaning |
 |---|---|
-| 不写，或 `current`、`now`、`head`、`latest`、`当前`、`最新` | 到现在为止记下的全部 |
-| `#17` | 前 17 个事件。`/decide log` 给每个事件编了号；`fork` 标记不占编号 |
-| `2026-10-08 17:44`、`10-08 17:44`、`10-08`、`17:44`、`10月8日 17:44` | 到那个时间为止的全部。本机时区；写到分钟算到那一分钟的最后一刻，只写日期算到当天最后一刻；没写年份取今年（那样会在未来就取去年），只写时刻取今天（会在未来就取昨天） |
-| `20261008T214400Z` | 事件文件名开头的那种 UTC 时间戳，可以只写前一段 |
-| `v22-adopted`、`构建版本` | 记下那个节点的那一刻：节点 id，或标题里唯一匹配的一段文字（匹配多个会拒绝并列出候选） |
-| `node:current` | 同上；节点的 id 恰好像上面某一种写法时，加 `node:` 前缀 |
+| nothing, or `current`, `now`, `head`, `latest`, `当前`, `最新` | Everything recorded so far |
+| `#17` | The first 17 events. `/decide log` numbers every event; `fork` markers take no number |
+| `2026-10-08 17:44`, `10-08 17:44`, `10-08`, `17:44`, `10月8日 17:44` | Everything up to that time. Local time zone; a time given to the minute counts to the last instant of that minute, a date alone to the end of that day; without a year the current year is used (the previous one if that would be in the future), with only a time today is used (yesterday if that would be in the future) |
+| `20261008T214400Z` | A UTC timestamp like the one at the start of event file names; the leading part is enough |
+| `v22-adopted`, `build version` | The moment that node was recorded: a node id, or a piece of a title that matches exactly one node (several matches are refused and the candidates listed) |
+| `node:current` | The same; use the `node:` prefix when a node's id happens to look like one of the forms above |
 
-时间点比这棵 tree 的第一个事件还早，会拒绝并告诉你第一个事件是什么时候的；`#N` 超过事件数也一样。
+A time earlier than the tree's first event is refused, and the message says when that first event was; so is a `#N` beyond the number of events.
 
-### 它怎么存
+### How it is stored
 
-- `main` 还在 `.claude/decisions/` 的 `events/` 和 `tree.json` 里，和只有一棵 tree 时完全一样。其他 tree 在 `.claude/decisions/trees/<名字>/`，各有自己的 `events/` 和 `tree.json`。`config.json` 整个项目只有一份。
-- 新开 = 把 base 版本之前的事件文件**逐字节、同样的文件名**复制进新 tree 的 `events/`，**最后**再写一个 `fork` 事件，记下是从哪棵 tree 的哪个事件开出来的。同样的文件名让事件的顺序在新 tree 里不变。顺序是有意的：看到 `fork` 事件，这棵 tree 才算开好；复制到一半被打断的，是一个没有 `fork` 事件的文件夹，不会被切过去（`/decide tree` 会标成"没做完的复制"）。
-- 再用同一个名字新开一次：上次留下的文件都在这次要复制的范围里，就接着做完；文件夹里有这次不会复制的文件，拒绝，并说明有几个。mod 不会替你删文件，请自己看一眼再处理那个文件夹，或换个名字。
-- 从一棵已经是 fork 的 tree 再开新 tree 也行：新 tree 只带一个 `fork` 事件，记的是它直接的来源。
-- 在新 tree 里的一切（模型的工具、你的命令、pane 里手动编辑）都只写进新 tree；原来那棵不会因此多一个文件。
+- `main` still lives in `events/` and `tree.json` under `.claude/decisions/`, exactly as when there was only one tree. Other trees live in `.claude/decisions/trees/<name>/`, each with its own `events/` and `tree.json`. There is a single `config.json` for the whole project.
+- Opening a tree means copying the event files before the base version **byte for byte, under the same file names** into the new tree's `events/`, and **finally** writing a `fork` event that records which tree and which event it was opened from. Keeping the file names keeps the order of the events in the new tree. The order of operations is deliberate: a tree counts as open only once its `fork` event exists; a copy interrupted halfway leaves a folder without a `fork` event, which is never switched to (`/decide tree` marks it "unfinished copy").
+- Opening the same name again: if the files left behind all fall within what this run would copy, it carries on and finishes the job; if the folder holds files this run would not copy, it refuses and says how many. The mod never deletes files for you: look at that folder yourself and deal with it, or pick another name.
+- You can open a tree from a tree that is itself a fork: the new tree carries just one `fork` event, recording its direct source.
+- Everything that happens in the new tree (the model's tools, your commands, manual edits in the pane) is written only into the new tree; the original does not gain a single file.
 
-### 切换对谁生效
+### Who a switch affects
 
-当前记录到哪棵 tree，写在 `config.json` 的一个可选键 `"tree": "<名字>"` 里（没有这个键就是 `main`）。**整个项目共用一个指针**，不是每个 session 各一个：
+Which tree recording currently goes to is written in an optional key of `config.json`, `"tree": "<name>"` (without the key it is `main`). **There is one pointer for the whole project**, not one per session:
 
-- 你在一个 session 里 `/decide new` 或 `/decide use`，其他所有在这个项目里运行的 session 都跟着切：最迟在下一个 5 秒轮询里跟上，弹一条提示（"现在记录到 tree「sql-v3」（项目已切换到它）"）。你自己切换的那个 session 只有回执，没有这条提示。
-- 模型的写工具和读工具、你敲的写命令（`add`、`status`、`note`、`retract`、`import`、`new`、`use`），动手之前都会先读一遍 `config.json`，所以别的 session 刚做的切换会立刻生效，不会有"刚切换完，这边还写进旧 tree"的空档。（pane 里的手动编辑写进 pane 当时显示的那棵 tree：它改的就是眼前这个节点。）
-- 这也包括无人值守的 session（比如远程服务器上长时间运行的）：你一切换，它们之后记的决定就进新 tree。不想这样，先 `/decide pause`，或者用 `--stay` 新开。
-- `config.json` 指向的 tree 在这台机器上还没有（比如 `config.json` 通过 git 先到，事件文件还没到）：session 留在原来的 tree，说一次，等事件文件到了再自己切过去。
-- 同名的 tree 在两台机器上各开了一次，git 合并后会落进同一个文件夹（复制出来的文件同名同内容，不冲突）。在不同机器上开 tree，请用不同的名字，或者先 `git pull`。
+- When you run `/decide new` or `/decide use` in one session, every other session running in this project follows: at the latest on the next 5-second poll, with a notice ("Now recording in tree sql-v3 (the project switched to it)."). The session where you made the switch gets only the receipt, not this notice.
+- The model's write and read tools and the write commands you type (`add`, `status`, `note`, `retract`, `import`, `new`, `use`) all read `config.json` before they act, so a switch another session has just made takes effect at once; there is no window in which this session still writes into the old tree. (A manual edit in the pane is written into the tree the pane is showing: it changes the node in front of you.)
+- This includes unattended sessions (a long-running one on a remote server, say): once you switch, the decisions they record afterwards go into the new tree. If you do not want that, run `/decide pause` first, or open the tree with `--stay`.
+- If `config.json` names a tree that does not exist on this machine (say `config.json` arrived through git before the event files did), the session stays on its current tree, says so once, and switches by itself when the event files arrive.
+- If the same tree name was opened on two machines, git merges them into the same folder (the copied files have the same names and contents, so they do not conflict). Open trees on different machines under different names, or `git pull` first.
 
-### 模型和这个功能
+### The model and this feature
 
-模型有 `decision_new_tree`、`decision_use_tree`，`decision_tree` 也能列出所有 tree、看事件编号（见[给模型的工具](#给模型的工具)）。工具说明里写明：只有你要求时才新开或切换，它不会自己动手。在不是 `main` 的 tree 里，system prompt 那一段会多一行 `Current tree: sql-v3 (from main at #17 (10-08 17:44)). …`，让模型知道它记的是哪一棵，下面列出的最近节点也是这一棵的；切换 tree 时这一段立即重写，不等下一个 turn。
+The model has `decision_new_tree` and `decision_use_tree`, and `decision_tree` can also list all trees and show event numbers (see [Tools for the model](#tools-for-the-model)). The tool descriptions say it opens or switches a tree only when you ask it to; it does not do so on its own. In a tree other than `main`, the system-prompt section carries one more line, `Current tree: sql-v3 (from main at #17 (10-08 17:44)). …`, so the model knows which tree it is recording into; the recent nodes listed below it are that tree's as well. When you switch trees the section is rewritten at once, without waiting for the next turn.
 
-### 暂停和未开启时
+### While paused, or before recording starts
 
-- 暂停期间你仍然可以新开和切换 tree（那是你自己的操作），回执会补一句"记录现在是暂停的"，之后的决定不记；模型的 `decision_new_tree`、`decision_use_tree` 和其他写工具一样被挡。
-- 项目还没有开始记录时，没有东西可以复制，命令会让你先 `/decide start`。
+- While paused you can still open and switch trees (those are your own actions). The receipt adds "Recording is paused; /decide resume turns it back on." and later decisions are not recorded; the model's `decision_new_tree` and `decision_use_tree` are blocked like its other write tools.
+- When the project is not recording yet there is nothing to copy, and the command asks you to run `/decide start` first.
 
-### 在 pane 里
+### In the pane
 
-标题行带 `[sql-v3]`（`main` 不带）。pane 高度够（≥ 16 行）时，标题下面还有一行说这棵 tree 从哪里开出来，后面接你给的 `--title`。窄的 pane 里这一行会被截断，矮的 pane 里省掉。
-
-```
-决策树 [sql-v3] · e2e-demo                记录中 · 4 个决定 · 12:00 更新
-基于 main 的 #4（10-09 12:00）· SQL 第三版
-────────────────────────────────────────────────────────────────────────
-主线  design v2 定稿
-────────────────────────────────────────────────────────────────────────
-  ✓ design v2 定稿                                                 10-08
-  ├ ✗ pool 数维持 32                                               10-09
-  └ ✓ 闸门：probe s1 通过                                          10-10
-❯   └ ○ SQL 方案 B
-────────────────────────────────────────────────────────────────────────
-▾ SQL 方案 B                                       ○ 计划 · user · 10-10
-────────────────────────────────────────────────────────────────────────
-k: ↑  j: ↓  Enter 展开  e: 编辑  p: 只看待定  h: 隐藏否决         警告 0
-a: 全部
-```
-
-## 界面
-
-下面是真实运行时的 pane（宽 72 列，中文界面；数据是示意）：
+The title row carries `[sql-v3]` (`main` has none). When the pane is tall enough (16 rows or more) there is also a line under the title saying where the tree was opened from, followed by your `--title`. In a narrow pane that line is truncated, in a short pane it is left out.
 
 ```
-决策树 · e2e-demo                         记录中 · 3 个决定 · 02:15 更新
+Decision tree [sql-v3] · demo    Recording · 4 decisions · updated 12:00
+from main at #4 (10-09 12:00) · SQL third try
 ────────────────────────────────────────────────────────────────────────
-现在
-  ZETA    gateway s0      ████████░░  3400/4000  约 23:50  预热中
-  BETA-0  ablate_wide s0  █░░░░░░░░░   420/4000  约 09:10
-  GAMMA                   空闲
-  下一步  闸 → probe s1（约 06:15）
-  ! GAMMA 空闲
+Mainline  Design v2 final
 ────────────────────────────────────────────────────────────────────────
-主线  design v2 定稿
+  ✓ Design v2 final                                                10-08
+  ├ ✗ Keep pool count at 32                                        10-09
+  └ ✓ Gate: probe s1 passed                                        10-10
+❯   └ ○ SQL plan B
 ────────────────────────────────────────────────────────────────────────
-❯ ✓ design v2 定稿                                                 10-10
-  ├ ✗ pool 数维持 32                                               10-10
-  └ ✓ 闸门：probe s1 通过                                          10-10
+▾ SQL plan B                                    ○ Planned · user · 10-10
 ────────────────────────────────────────────────────────────────────────
-▾ design v2 定稿                                          ✓ 采用 · 10-10
-────────────────────────────────────────────────────────────────────────
-k: ↑  j: ↓  Enter 展开  e: 编辑  p: 只看待定  h: 隐藏否决         警告 0
-a: 全部  s: 现在
+k: ↑  j: ↓  Enter expand  e: Edit  p: Pending                 Warnings 0
+h: Hide rejected  a: All
 ```
 
-从上到下：标题行（项目名、记录状态、决定数、更新时间）、"现在"（状态命令的数据）、主线、树、选中节点的详情（理由、依据、来源、取代关系、备注）、键位提示和警告数。不在 `main` 时，标题行带 `[tree 名]`，下面一行说这棵 tree 的来历（见[多棵 tree](#多棵-tree)）。英文界面对应写成 `Now`、`Mainline`、`Adopted`、`Next`。
+## The pane
 
-窗口太矮时，先省掉"现在"一栏，再压缩、省掉详情，让树保住几行；底部的键位提示不让位（行数 ≥ 12 时占两行，否则一行；太窄时先丢不常用的键）。等你批准的状态命令例外：它比详情优先，空间不够时先收起详情；连整条命令加按钮都放不下时，不画按钮，"现在"一栏只剩一行 `有一条状态命令在等你确认；把 pane 拉大后才看得全。`，pane 拉大后才会出现命令和 **Allow**。
+This is the pane as it really draws (72 columns wide, English interface; the data is illustrative):
 
-状态的符号和颜色：
+```
+Decision tree · demo             Recording · 3 decisions · updated 12:00
+────────────────────────────────────────────────────────────────────────
+Now
+  ZETA    gateway s0      ████████░░  3400/4000  ~23:50  warming up
+  BETA-0  ablate_wide s0  █░░░░░░░░░   420/4000  ~09:10
+  GAMMA                   idle
+  Next  gate → probe s1 (~06:15)
+  ! GAMMA idle
+────────────────────────────────────────────────────────────────────────
+Mainline  Design v2 final
+────────────────────────────────────────────────────────────────────────
+❯ ✓ Design v2 final                                                10-08
+  ├ ✗ Keep pool count at 32                                        10-09
+  └ ✓ Gate: probe s1 passed                                        10-10
+────────────────────────────────────────────────────────────────────────
+▾ Design v2 final                               ✓ Adopted · user · 10-08
+────────────────────────────────────────────────────────────────────────
+k: ↑  j: ↓  Enter expand  e: Edit  p: Pending                 Warnings 0
+h: Hide rejected  a: All  s: Now
+```
 
-| status | 中文 | English | 符号 | ASCII 备用 | 颜色 |
+From top to bottom: the title row (project name, recording state, number of decisions, update time); the "Now" block (the status command's data); the mainline; the tree; the selected node's details (rationale, evidence, sources, what replaces what, notes); the key hints and the warning count. Outside `main` the title row carries `[tree name]` and the line below it says where the tree was opened from (see [Multiple trees](#multiple-trees)). In the Chinese interface the same labels read `现在`, `主线`, `采用` and `下一步`.
+
+When the window is too short, the "Now" block is dropped first, then the details are compressed and dropped, so that the tree keeps a few rows; the key hints at the bottom never give way (two lines at 12 rows or more, one line below that; when too narrow, the less common keys go first). A status command awaiting your approval is the exception: it takes priority over the details, which are folded away first when space runs short. If even the whole command plus its button does not fit, no button is drawn and the "Now" block shows only one line, `A status command awaits your OK; enlarge the pane to read it.`; the command and **Allow** appear once the pane is larger.
+
+Status symbols and colors:
+
+| status | English | Chinese | symbol | ASCII fallback | color |
 |---|---|---|---|---|---|
-| `adopted` | 采用 | Adopted | ✓ | `+` | 绿 |
-| `rejected` | 否决 | Rejected | ✗ | `x` | 红 |
-| `no-diff` | 无差别 | No diff | = | `=` | 灰 |
-| `in-progress` | 进行中 | In progress | ◐ | `~` | 强调色 |
-| `planned` | 计划 | Planned | ○ | `o` | 强调色 |
-| `proposed` | 提议 | Proposed | ◌ | `?` | 强调色，暗 |
-| `withdrawn` | 撤回 | Withdrawn | ⊘ | `/` | 暗 |
-| `superseded` | 被取代 | Superseded | ⊘ | `/` | 暗 |
-| `deferred` | 暂缓 | Deferred | ‖ | `"` | 暗 |
+| `adopted` | Adopted | 采用 | ✓ | `+` | green |
+| `rejected` | Rejected | 否决 | ✗ | `x` | red |
+| `no-diff` | No diff | 无差别 | = | `=` | gray |
+| `in-progress` | In progress | 进行中 | ◐ | `~` | accent |
+| `planned` | Planned | 计划 | ○ | `o` | accent |
+| `proposed` | Proposed | 提议 | ◌ | `?` | accent, dim |
+| `withdrawn` | Withdrawn | 撤回 | ⊘ | `/` | dim |
+| `superseded` | Superseded | 被取代 | ⊘ | `/` | dim |
+| `deferred` | Deferred | 暂缓 | ‖ | `"` | dim |
 
-◐ ○ ◌ ⊘ 和框线字符在 Unicode 里是"歧义宽度"，有的终端把它们画成两列。默认按一列算（和 Claude Code 自己的排版一致）；如果你的终端画歪了，在 `config.json` 里设 `display.asciiGlyphs: true`，状态符号、进度条、树的连线改用 ASCII。Ghostty 的情况见[下一节](#ghostty-和其他终端)。
+◐ ○ ◌ ⊘ and the box-drawing characters have "ambiguous width" in Unicode, and some terminals draw them two columns wide. By default they are counted as one column (as Claude Code's own layout does). If your terminal draws them crooked, set `display.asciiGlyphs: true` in `config.json`, and the status symbols, progress bars and tree connectors switch to ASCII. For Ghostty see [the next section](#ghostty-and-other-terminals).
 
-**键盘**（pane 拿到键盘时；`/tree` 或 `ctrl+x` 然后 `Tab` 把键盘交给 pane，Esc 还给 prompt）：
+**Keyboard** (when the pane has the keyboard: `/tree`, or `ctrl+x` then `Tab`, hands the keyboard to the pane; Esc gives it back to the prompt):
 
-| 键 | 作用 |
+| Key | Action |
 |---|---|
-| ↑ ↓ / `k` `j` / Tab | 在行之间移动 |
-| Enter | 选中；再按一次展开或收起 |
-| `a` | 显示全部 |
-| `p` | 只看待定（计划、提议、进行中） |
-| `h` | 隐藏否决和撤回 |
-| `s` | 显示或隐藏"现在"一栏 |
-| `e` | 编辑选中节点：状态（九选一）和一句话摘要，提交时写一个 `update` 事件 |
-| Esc | 把键盘还给 prompt |
+| ↑ ↓ / `k` `j` / Tab | Move between rows |
+| Enter | Select; press again to expand or collapse |
+| `a` | Show everything |
+| `p` | Pending only (planned, proposed, in progress) |
+| `h` | Hide rejected and withdrawn |
+| `s` | Show or hide the "Now" block |
+| `e` | Edit the selected node: its status (one of nine) and a one-line summary; on submit an `update` event is written |
+| Esc | Give the keyboard back to the prompt |
 
-所有截断和换行按**显示宽度**算（CJK 和全角字符两列，组合符号零列，歧义宽度一列），宽度取 pane 实际可画的列数。
+All truncation and wrapping is done by **display width** (CJK and fullwidth characters take two columns, combining marks zero, ambiguous-width characters one), using the number of columns the pane can actually draw.
 
-## Ghostty 和其他终端
+## Ghostty and other terminals
 
-在 Ghostty 里可以用，需要知道三件事。
+It works in Ghostty. Three things to know.
 
-**1. 宽度。** pane 里每一行都是 mod 自己按"显示宽度"算好再交给 Claude Code 的。终端之间对一小类字符的宽度意见不一致：emoji 后跟变体选择符（❤️）、零宽连接符（👨‍👩‍👧）、肤色修饰符（👍🏽）、国旗（🇨🇳）、keycap（1️⃣），以及比终端宽度表更新的 emoji。Ghostty 默认按 grapheme 聚类算宽度（`grapheme-width-method = unicode`，Unicode 数据较新），Claude Code 自己有一张宽度表，tmux 又是另一套；两边数出来差一格，这一行就会在屏幕边缘折行，把下面整个 pane 冲歪。所以 pane **画出来的文字**先过一遍过滤，变成各种算法数出来一样宽的形式：
+**1. Width.** Every line in the pane is laid out by the mod itself, by "display width", before it is handed to Claude Code. Terminals disagree about the width of a small class of characters: an emoji followed by a variation selector (❤️), zero-width joiners (👨‍👩‍👧), skin-tone modifiers (👍🏽), flags (🇨🇳), keycaps (1️⃣), and emoji newer than the terminal's width table. Ghostty counts width by grapheme cluster by default (`grapheme-width-method = unicode`, with fairly recent Unicode data), Claude Code has a width table of its own, and tmux has yet another. When two of them count differently by one cell, that line wraps at the edge of the screen and pushes everything below it, the whole pane, out of place. So the **text the pane draws** goes through a filter first and becomes a form that all the algorithms count the same:
 
-| 原文 | pane 里画成 |
+| Original | Drawn in the pane as |
 |---|---|
-| ❤️ ⚠️（带变体选择符）、1️⃣ | ❤ ⚠ 1（去掉选择符和 keycap 符号） |
-| 👨‍👩‍👧 👩‍💻（连接符） | 👨👩👧 👩💻（拆成单个） |
-| 👍🏽（肤色） | 👍 |
-| 🇨🇳（国旗） | `CN`（国家代码） |
-| Unicode 12 以后新增的 emoji（🫠 🥹 🪄 🛜 …） | `?` |
-| 不可见字符（零宽空格、软连字符、方向标记、标签字符）、被截断的半个 emoji | 去掉 |
+| ❤️ ⚠️ (with a variation selector), 1️⃣ | ❤ ⚠ 1 (selector and keycap sign removed) |
+| 👨‍👩‍👧 👩‍💻 (joiners) | 👨👩👧 👩💻 (split into single emoji) |
+| 👍🏽 (skin tone) | 👍 |
+| 🇨🇳 (flag) | `CN` (country code) |
+| Emoji added after Unicode 12 (🫠 🥹 🪄 🛜 …) | `?` |
+| Invisible characters (zero-width space, soft hyphen, direction marks, tag characters) and half-cut emoji | removed |
 
-汉字、全角标点、拉丁字母加组合符号（é）、韩文、✅ ❌ ⭐ 🚀 🔥 🟢 这类老 emoji 不受影响。**只影响画出来的样子**：`events/` 和 `tree.json` 里是原文，给模型的 prompt 和 `decision_tree` 工具的输出也是原文。印度系文字、泰文 SARA AM 这类"占位组合符"没有处理，可能差一格。
+Han characters, fullwidth punctuation, Latin letters with combining marks (é), Hangul, and older emoji such as ✅ ❌ ⭐ 🚀 🔥 🟢 are not affected. **Only the way things are drawn changes**: `events/` and `tree.json` hold the original text, and the prompt given to the model and the output of the `decision_tree` tool are the original text too. Indic scripts and the Thai SARA AM, which are "placeholder combining marks", are not handled and may be off by one cell.
 
-`grapheme-width-method` 设成 `unicode`（默认）或 `legacy` 对 pane 都没有影响，过滤之后两种算法数出来一样。
+Setting `grapheme-width-method` to `unicode` (the default) or `legacy` makes no difference to the pane: after the filter both algorithms count the same.
 
-**2. 字形。** 状态符号 ✓ ✗ ◐ ○ ◌ ⊘ ‖、进度条 █ ░、树的连线 ├ └ │ ─ 都是"歧义宽度"字符，Ghostty 按一列算，和 mod 一致。框线和方块字符 Ghostty 自己画；几何形状（◐ ○ ◌ ⊘）取决于字体，缺字形时 Ghostty 退到别的字体，可能显得偏大或偏小。这时二选一：
+**2. Glyphs.** The status symbols ✓ ✗ ◐ ○ ◌ ⊘ ‖, the progress bar █ ░ and the tree connectors ├ └ │ ─ are all "ambiguous width" characters; Ghostty counts them as one column, the same as the mod. Ghostty draws box-drawing and block characters itself; the geometric shapes (◐ ○ ◌ ⊘) depend on the font, and when a glyph is missing Ghostty falls back to another font, which can make them look too large or too small. In that case pick one of two:
 
-- 在 `config.json` 里设 `display.asciiGlyphs: true`，全部换成 ASCII；
-- 或者给这几个码点指定一个有它们的等宽字体。Ghostty 配置里：
+- set `display.asciiGlyphs: true` in `config.json`, and everything becomes ASCII;
+- or point those code points at a monospace font that has them. In the Ghostty config:
 
   ```
   font-codepoint-map = U+25CB-U+25D1=DejaVu Sans Mono
   font-codepoint-map = U+2298=DejaVu Sans Mono
   ```
 
-  语法是 `码点=字体名`，码点可以是单个或 `U+起-U+止` 的范围；字体名换成你机器上有的。
+  The syntax is `codepoint=font name`; a codepoint is either a single one or a range `U+start-U+end`; use a font name that exists on your machine.
 
-**3. 从 Ghostty ssh 到远程服务器。** Ghostty 的 `TERM` 是 `xterm-ghostty`，多数服务器没有它的 terminfo；症状是 `claude`、`tmux` 报 `missing or unsuitable terminal: xterm-ghostty`，或者颜色、按键不对。三种办法（来自 Ghostty 文档）：
+**3. ssh from Ghostty to a remote server.** Ghostty's `TERM` is `xterm-ghostty`, and most servers do not have its terminfo. The symptom is `claude` or `tmux` complaining `missing or unsuitable terminal: xterm-ghostty`, or wrong colors or keys. Three ways out (from the Ghostty documentation):
 
-- 让 Ghostty 自动处理，在 Ghostty 配置里写 `shell-integration-features = ssh-env,ssh-terminfo`。`ssh-terminfo` 在 ssh 到一台新机器时把 terminfo 装过去，`ssh-env` 转发环境变量；装不上时退回 `TERM=xterm-256color`。它们包装的是本机交互式 shell 里的 `ssh`，要在那个 shell 里启用 Ghostty 的 shell integration；
-- 手动装一次：`infocmp -x xterm-ghostty | ssh 你的服务器 -- tic -x -`；
-- 不装：在 `~/.ssh/config` 里对这台机器写 `SetEnv TERM=xterm-256color`（OpenSSH 8.7 以上，只对没有 terminfo 的机器用）。
+- let Ghostty handle it, by writing `shell-integration-features = ssh-env,ssh-terminfo` in the Ghostty config. `ssh-terminfo` installs the terminfo on a new machine when you ssh to it, and `ssh-env` forwards environment variables; when the install fails it falls back to `TERM=xterm-256color`. They wrap the `ssh` of your local interactive shell, so Ghostty's shell integration has to be enabled in that shell;
+- install it by hand once: `infocmp -x xterm-ghostty | ssh your-server -- tic -x -`;
+- or do not install it: in `~/.ssh/config` write `SetEnv TERM=xterm-256color` for that machine (OpenSSH 8.7 or newer; only for machines without the terminfo).
 
-在 tmux 或 screen 里，宽度会被多路复用器再数一遍，上面的过滤同样有效。
+Inside tmux or screen the multiplexer counts the width once more; the filter above works there too.
 
-## 给模型的工具
+## Tools for the model
 
-模型看到的名字是 `mcp__decision-tree__<name>`。
+The model sees the names as `mcp__decision-tree__<name>`.
 
-| 工具 | 何时可见 | 作用 |
+| Tool | Visible | What it does |
 |---|---|---|
-| `decision_log_start` | 未开启时 | 开启这个项目的记录（`title`，可选 `rootTitle`、`statusArgv`） |
-| `decision_record` | 开启后 | 新增一个决定；返回 id 和挂在哪个节点下 |
-| `decision_update` | 开启后 | 改状态、摘要、理由，追加依据和来源，标记被谁取代 |
-| `decision_note` | 开启后 | 给节点追加一条备注 |
-| `decision_tree` | 开启后 | 读树：默认返回主线加最近 20 个节点的紧凑文本；给 `id` 时返回该节点详情，给 `query` 时按 id 或标题里的一段文字找；`trees: true` 列出所有 tree 和各自的来历；`log: N` 给出当前 tree 最近 N 个事件的编号（`#N` 就是 `decision_new_tree` 的 `at`）。记录前用来找对父节点、避免重复 |
-| `decision_new_tree` | 开启后 | 新开一棵 tree：`name`，可选 `at`（版本）、`from`、`empty`、`title`、`stay`，含义同 `/decide new`。**只在你明确要求时**调用 |
-| `decision_use_tree` | 开启后 | 切到项目里另一棵 tree：`name`。同上，只在你要求时调用 |
+| `decision_log_start` | while recording is off | Turn recording on for this project (`title`; optionally `rootTitle`, `statusArgv`) |
+| `decision_record` | once on | Add a decision; returns the id and the node it hangs under |
+| `decision_update` | once on | Change status, summary or rationale; append evidence and sources; mark what superseded it |
+| `decision_note` | once on | Append a note to a node |
+| `decision_tree` | once on | Read the tree. By default the mainline plus the 20 most recent nodes as compact text; with `id`, the details of that node; with `query`, a search by a piece of an id or title; `trees: true` lists all trees and where each came from; `log: N` gives the numbers of the last N events of the current tree (`#N` is the `at` of `decision_new_tree`). Used before recording, to find the right parent and avoid duplicates |
+| `decision_new_tree` | once on | Open a new tree: `name`, optionally `at` (version), `from`, `empty`, `title`, `stay`, with the same meaning as in `/decide new`. **Called only when you explicitly ask** |
+| `decision_use_tree` | once on | Switch to another tree of the project: `name`. Likewise only when you ask |
 
-每次调用：校验输入 → 写事件文件 → 重建 `tree.json` → 更新界面 → 返回一行回执（例：`Recorded v22-adopted (under dbpool-adopted, Adopted)`；中文输入下是"已记录 …"）。输入不合法时返回模型能据以修正的说明（`deny`），不写任何东西。
+Every call: validate the input → write an event file → rebuild `tree.json` → update the interface → return a one-line receipt (for example `Recorded v22-adopted (under dbpool-adopted, Adopted)`; with Chinese input it reads "已记录 …"). Invalid input returns an explanation the model can correct itself from (a `deny`) and writes nothing.
 
-工具说明里写了记录规则：
+The tool descriptions carry the recording rules:
 
-- **记**：你明确拍板的（采用、否决、撤回、改规则、定下一步）；按事先定好的规则自动得出的结论（"闸"，英文 gate：规则放行或跳过某一步，`decidedBy: "gate"`）；你接受的计划（`planned`）；提出了但还没定的（`proposed`）。
-- **不记**：讨论中、你没同意的想法不记成 `adopted`；单纯的进度和日志不记（那是"现在"一栏的事）。
-- 依据写关键数字和区间，run 名放 `evidence.run`，报告路径放 `evidence.source`；状态跟着结果走：`planned → in-progress → adopted / rejected`；被新决定取代时，对旧节点 `supersededBy` 并把状态改 `superseded`；一件事一个节点（同一件事的第二个 seed 是追加依据，不是新节点）；拿不准父节点先调用 `decision_tree`。
+- **Record**: what you decided explicitly (adopted, rejected, withdrawn, a rule changed, a next step set); conclusions that follow automatically from a rule agreed beforehand (a "gate": a rule lets a step through or skips it, `decidedBy: "gate"`); plans you have accepted (`planned`); things proposed but not decided yet (`proposed`).
+- **Do not record**: ideas under discussion that you have not agreed to are never recorded as `adopted`; plain progress and logs are not recorded (that is the business of the "Now" block).
+- Evidence takes key numbers and intervals; the run name goes in `evidence.run` and the report path in `evidence.source`. Status follows the result: `planned → in-progress → adopted / rejected`. When a new decision replaces an old one, set `supersededBy` on the old node and change its status to `superseded`. One matter, one node (the second seed of the same experiment is added evidence, not a new node). When unsure about the parent, call `decision_tree` first.
 
-开启后 system prompt 里多一段（`scope: session`，约 1,500 字符以内）：规则缩写、当前主线（id 和标题）、最近 10 个节点（id · 状态 · 标题），模型多数时候不用先查树就能挂对父节点。在不是 `main` 的 tree 里还有一行 `Current tree: …`，说明记的是哪一棵、从哪里开出来。
+Once recording is on, the system prompt gets one more section (`scope: session`, within about 1,500 characters): the rules in short, the current mainline (ids and titles) and the 10 most recent nodes (id · status · title), so that most of the time the model can attach a node to the right parent without looking at the tree first. In a tree other than `main` there is also a line `Current tree: …` saying which tree it is recording into and where that tree was opened from.
 
-## 数据格式
+## Data format
 
 ```
-<项目根>/.claude/decisions/
-  config.json        项目级配置：标题、开始时间、是否在记录、当前记录到哪棵 tree、状态命令、显示选项
-  events/*.json      main 的事件文件，不可变，唯一的数据源
-  tree.json          main 的派生快照，给外部工具读，随时可以重建
-  trees/<名字>/      其他 tree，每棵有自己的 events/ 和 tree.json（没新开过 tree 就没有这个文件夹）
+<project root>/.claude/decisions/
+  config.json        project-level settings: title, start time, whether recording, which tree recording goes to, status command, display options
+  events/*.json      main's event files: immutable, the only source of truth
+  tree.json          main's derived snapshot, for external tools; can be rebuilt at any time
+  trees/<name>/      other trees, each with its own events/ and tree.json (no such folder until a tree has been opened)
 ```
 
-**项目根**按顺序找：从 session 的工作目录往上第一个含有 `.claude/decisions/config.json` 的目录（所以在子目录里启动也能接上）；否则 `git rev-parse --show-toplevel`；否则工作目录。
+The **project root** is found in this order: the first directory, going up from the session's working directory, that contains `.claude/decisions/config.json` (so starting in a subdirectory still connects); otherwise `git rev-parse --show-toplevel`; otherwise the working directory.
 
 ### config.json
 
@@ -389,65 +410,65 @@ a: 全部  s: 现在
 }
 ```
 
-`status` 可省略（没有"现在"一栏）；`intervalSec` 取 5–3600、`timeoutSec` 取 1–120。`display.language` 为 `"zh"` 或 `"en"` 时固定，`"auto"` 跟随你的输入。`tree` 也可省略（上面的例子里没有）：整个项目现在记录到哪棵 tree，没有就是 `main`；`/decide new`、`/decide use` 改它，见[多棵 tree](#多棵-tree)。名字不合规的当作没有这个键。mod 改这个文件时只动它要改的那个键，其余的键（包括不认识的）原样保留，只是整个文件按 2 空格缩进重新写出。这个文件应该进 git。
+`status` can be left out (then there is no "Now" block); `intervalSec` takes 5–3600 and `timeoutSec` 1–120. `display.language` fixes the language when it is `"zh"` or `"en"`; `"auto"` follows what you type. `tree` can be left out too (it is not in the example above): it says which tree the whole project is recording into right now, and is `main` when absent; `/decide new` and `/decide use` change it, see [Multiple trees](#multiple-trees). A name that is not valid is treated as if the key were absent. When the mod changes this file it touches only the key it means to change; all other keys (including ones it does not recognize) are kept as they were, but the whole file is rewritten with 2-space indentation. This file should go into git.
 
-### 事件文件
+### Event files
 
-每次写入新建一个文件，永远不改旧文件：`events/<ts>_<session>_<seq>.json`，其中 `ts` 是 UTC 时间 `YYYYMMDDTHHMMSSmmmZ`，`session` 是 session id 的前 6 位，`seq` 是这个进程内的 4 位序号。**文件名的字典序就是事件的顺序**，同一毫秒由 session 和 seq 打破平局。写入时文件名里的时间取"本机时钟"和"已经读到的最新事件的时间 + 1 毫秒"中较晚的那个，所以哪怕这台机器的时钟比别的机器慢，它写的事件也排在它已经看到的事件之后（读到比本机时钟晚一天以上的时间当作别处的时钟错误，不跟随）。
+Every write creates a new file, and old files are never modified: `events/<ts>_<session>_<seq>.json`, where `ts` is the UTC time `YYYYMMDDTHHMMSSmmmZ`, `session` is the first 6 characters of the session id, and `seq` is a 4-digit sequence number within the process. **The lexicographic order of the file names is the order of the events**; a tie within the same millisecond is broken by session and seq. When writing, the time in the file name is the later of the local clock and the time of the newest event already read plus 1 millisecond. So even if this machine's clock is behind another's, the events it writes sort after the events it has already seen (a time more than a day later than the local clock is taken to be a clock error somewhere else and is not followed).
 
 ```ts
 type DecisionEvent = {
   v: 1
   op: 'start' | 'add' | 'update' | 'note' | 'move' | 'retract' | 'fork'
-  id?: string                  // 目标节点（start、fork 没有）
-  ts: string                   // ISO 8601，带时区
+  id?: string                  // target node (not on start or fork)
+  ts: string                   // ISO 8601, with a time zone
   session: string
   actor: 'user' | 'model' | 'gate' | 'import'
-  node?: NodeFields            // add：完整字段
+  node?: NodeFields            // add: the full fields
   patch?: Partial<NodeFields> & {
-    addEvidence?: Evidence[]   // 追加，不覆盖
+    addEvidence?: Evidence[]   // appended, never overwritten
     addSources?: string[]
   }                            // update
-  text?: string                // note：一条备注；fork：这棵 tree 的说明（--title）
-  parent?: string | null       // move：改挂到哪里
-  reason?: string              // retract：这条记错了，撤掉
-  base?: {                     // fork：这棵 tree 是从哪里开出来的
-    tree: string               //   来源 tree 的名字
-    at: string | null          //   复制的最后一个事件的文件名；空白 tree 是 null
-    count: number              //   复制了几个事件；空白 tree 是 0
+  text?: string                // note: the note; fork: the tree's description (--title)
+  parent?: string | null       // move: where to re-attach
+  reason?: string              // retract: why this record is taken back
+  base?: {                     // fork: where this tree was opened from
+    tree: string               //   name of the source tree
+    at: string | null          //   file name of the last event copied; null for a blank tree
+    count: number              //   how many events were copied; 0 for a blank tree
   }
 }
 
 type NodeFields = {
-  title: string                // 一行，界面上最多约 40 列
-  parent: string | null        // 挂在哪个决定下面；null 是根
+  title: string                // one line, about 40 columns at most in the interface
+  parent: string | null        // which decision it hangs under; null is a root
   status: 'adopted' | 'rejected' | 'no-diff' | 'in-progress' | 'planned'
         | 'proposed' | 'withdrawn' | 'superseded' | 'deferred'
   kind: 'decision' | 'protocol' | 'design' | 'milestone'
-  trunk?: boolean              // 主线上的决定
-  summary?: string             // 一句话结论
-  rationale?: string           // 理由，可以多行
+  trunk?: boolean              // a decision on the mainline
+  summary?: string             // one-line conclusion
+  rationale?: string           // the reasons; may be several lines
   evidence?: Evidence[]
-  sources?: string[]           // 报告、文档的路径，相对项目根
+  sources?: string[]           // paths of reports and documents, relative to the project root
   decidedBy?: 'user' | 'gate' | 'model'
-  decidedAt?: string           // 决定生效的时间，可以早于记录的时间
-  supersededBy?: string        // 被哪个决定取代
+  decidedAt?: string           // when the decision took effect; may be earlier than when it was recorded
+  supersededBy?: string        // which decision replaced it
   tags?: string[]
 }
 
 type Evidence = {
-  label: string                // 例："预热后 P99，suite 内"
-  value?: string               // 例："−12.6%"
-  ci?: string                  // 例："[−15.1, −10.4]"
-  run?: string                 // 例："v22_db_pool_cap s0"
+  label: string                // e.g. "P99 after warm-up, within suite"
+  value?: string               // e.g. "−12.6%"
+  ci?: string                  // e.g. "[−15.1, −10.4]"
+  run?: string                 // e.g. "v22_db_pool_cap s0"
   note?: string
-  source?: string              // 报告路径
+  source?: string              // path of the report
 }
 ```
 
-**外部脚本也可以直接写事件文件**（比如 gate 检查点的脚本写 `actor: "gate"` 的 `add` / `update`）：按上面的文件名和 JSON 格式新建一个文件即可，不要修改已有文件。所有打开着的 session 在 5 秒内会读到并更新界面。先写临时文件再 `mv` 成最终文件名最稳妥；万一读到写了一半的文件，mod 会再读几次，之后才把它记成警告。
+**External scripts may also write event files directly** (a script at a gate checkpoint writing an `add` or `update` with `actor: "gate"`, say): create a new file with the file name and JSON format above, and never modify an existing file. Every open session picks it up within 5 seconds and updates its interface. The safest way is to write a temporary file and `mv` it to its final name; if a half-written file is ever read, the mod reads it a few more times before it records a warning.
 
-一个最小的例子：
+A minimal example:
 
 ```json
 {
@@ -458,7 +479,7 @@ type Evidence = {
   "session": "gate01",
   "actor": "gate",
   "node": {
-    "title": "闸门：probe s1 通过",
+    "title": "Gate: probe s1 passed",
     "parent": "design-v2",
     "status": "adopted",
     "kind": "decision",
@@ -468,159 +489,167 @@ type Evidence = {
 }
 ```
 
-### 重放规则
+### Replay rules
 
-- 按文件名顺序读全部事件。
-- `start`：标记日志已开启（只认第一条）。
-- `add`：建节点；id 已存在则忽略这条并计一个警告。
-- `update`：逐字段覆盖；`addEvidence`、`addSources` 追加并去重。
-- `move`：改 parent；会成环的拒绝并计警告。
-- `retract`：节点标为已撤销，默认不显示，可以在过滤里打开。
-- `fork`：只认第一条（一棵 tree 只开一次）。它不是决定，不出现在树里，也不占版本编号，只记下这棵 tree 的来历（`base`、说明、谁开的、什么时候）。`base` 不合格的计一个警告，当作没有。
-- `note`：追加到节点的备注列表。
-- 解析失败、版本不认识、op 不认识的文件跳过，计警告，底栏显示警告数。
-- 冲突：两个 session 改同一个字段，文件名靠后的生效。
+- All events are read in file-name order.
+- `start`: marks the log as on (only the first one counts).
+- `add`: creates a node; if the id already exists, the event is ignored and one warning is counted.
+- `update`: overwrites field by field; `addEvidence` and `addSources` append and de-duplicate.
+- `move`: changes the parent; one that would make a cycle is refused and counted as a warning.
+- `retract`: marks the node as retracted; it is hidden by default and can be shown in the filter.
+- `fork`: only the first one counts (a tree is opened once). It is not a decision: it does not appear in the tree and takes no version number; it only records where this tree came from (`base`, the description, who opened it, and when). A `base` that is not valid counts as one warning and is treated as absent.
+- `note`: appended to the node's list of notes.
+- A file that fails to parse, has an unknown version or has an unknown op is skipped and counted as a warning; the bottom row shows the number of warnings.
+- Conflicts: when two sessions change the same field, the one whose file name sorts later wins.
 
-### 节点 id
+### Node ids
 
-优先用模型给的可读 slug（kebab-case，例如 `v22-adopted`），要求匹配 `^[a-z0-9][a-z0-9-]{2,47}$` 且唯一，重复时加后缀 `-2`、`-3`；没给就由标题生成，标题里没有可用字符时（比如全是中文）用 `d-<base36 时间戳>`。命令和工具引用节点时，也接受标题里唯一匹配的一段文字。
+The readable slug given by the model is preferred (kebab-case, for example `v22-adopted`); it has to match `^[a-z0-9][a-z0-9-]{2,47}$` and be unique, and on a duplicate the suffix `-2`, `-3` is added. With none given, one is made from the title, and when the title has no usable characters (all Chinese, say) `d-<base36 timestamp>` is used. Commands and tools that refer to a node also accept a piece of its title that matches exactly one node.
 
 ### tree.json
 
-本 session 每写一次事件就重建一次：`{ generatedAt, project, tree, fork?, nodes, warnings }`，`tree` 是这份快照属于哪棵 tree（`main` 的在 `.claude/decisions/tree.json`，其他的在各自的 `trees/<名字>/tree.json`），`fork` 只有开出来的 tree 才有（同事件里的 `base` 加上说明、谁开的、什么时候），节点是重放后的完整字段（另有 `createdAt`、`createdBy`、`updatedAt`、`notes`、`addedBy` 这些派生字段）。它是派生物，**从不当数据源读**，给外部工具（比如网页版的实验树）用。别的进程（或脚本）只追加事件文件时，`tree.json` 要等某个 session 下一次写入才更新。
+Rebuilt by this session on every event it writes: `{ generatedAt, project, tree, fork?, nodes, warnings }`. `tree` says which tree the snapshot belongs to (`main`'s is at `.claude/decisions/tree.json`, the others at `trees/<name>/tree.json`); `fork` is present only for trees that were opened from another (the event's `base` plus the description, who opened it, and when); the nodes are the full replayed fields (plus derived fields such as `createdAt`, `createdBy`, `updatedAt`, `notes` and `addedBy`). It is a derived product and is **never read as a source of truth**; it is there for external tools (a web view of the experiment tree, say). When another process (or a script) only appends event files, `tree.json` is not updated until some session next writes.
 
-### 规模和 git
+### Size and git
 
-一个事件文件通常小于 2 KB，几百上千个都没问题；读取是增量的（只读新出现的文件名）。`.claude/decisions/` 应该进 git，纯文本，不走 LFS；每个事件是独立的新文件，`events/` 里的合并不会冲突。会冲突的只有整个文件重写的两个：`config.json`（两边都改了才会，比如同时切了 tree）和 `tree.json`（派生的，冲突时留哪一边都行，下次写入会重建）。新开一棵 tree 会复制它的 base 之前的所有事件文件，每个文件很小，所以复制本身不是负担。
+An event file is usually under 2 KB, and hundreds or thousands of them are no problem; reading is incremental (only newly appeared file names are read). `.claude/decisions/` should go into git, as plain text, not through LFS. Every event is a separate new file, so merges in `events/` do not conflict. The only two files that can conflict are the ones rewritten whole: `config.json` (only if both sides changed it, for example both switched trees) and `tree.json` (derived; keep either side on a conflict, the next write rebuilds it). Opening a tree copies all the event files before its base; each file is tiny, so the copying itself is no burden.
 
-### 导入种子数据
+### Importing seed data
 
-`/decide import <文件>` 读项目里的一个 JSON 文件：节点数组（也接受 `{ "nodes": [...] }`），每个节点是 `NodeFields` 加一个 `id`，写成 `actor: "import"` 的 `add` 事件。`parent` 写文件里的 id（可以指向文件里更靠后的节点），也可以指向树里已有的节点。不合格的节点被跳过，回执里说明导入了几个、跳过了几个。
+`/decide import <file>` reads a JSON file in the project: an array of nodes (`{ "nodes": [...] }` is accepted too), each node being `NodeFields` plus an `id`, and writes them as `add` events with `actor: "import"`. `parent` is an id in the file (it may point at a node further down the file) or a node that is already in the tree. Nodes that are not valid are skipped, and the receipt says how many were imported and how many skipped.
 
-## "现在"一栏和状态命令
+## The "Now" block and the status command
 
-在 `config.json` 里配置 `status.argv`，mod 就会在项目根下运行它，读 stdout 的 JSON，每 `intervalSec` 秒（默认 30）刷新一次，画在树的上方。
+Set `status.argv` in `config.json` and the mod runs it under the project root, reads the JSON on stdout, refreshes it every `intervalSec` seconds (30 by default), and draws it above the tree.
 
-### 输出契约
+### Output contract
 
 ```json
 {
   "updatedAt": "2026-10-10T00:20:00-04:00",
   "lanes": [
-    { "name": "ZETA",   "run": "gateway s0",     "state": "running", "step": 3400, "total": 4000, "eta": "23:50", "note": "预热中" },
+    { "name": "ZETA",   "run": "gateway s0",     "state": "running", "step": 3400, "total": 4000, "eta": "23:50", "note": "warming up" },
     { "name": "BETA-0", "run": "ablate_wide s0", "state": "running", "step": 420,  "total": 4000, "eta": "09:10" }
   ],
-  "next": [ { "text": "闸 → probe s1", "eta": "06:15" } ],
-  "warnings": [ "GAMMA 空闲" ]
+  "next": [ { "text": "gate → probe s1", "eta": "06:15" } ],
+  "warnings": [ "GAMMA idle" ]
 }
 ```
 
-- `state` 取值：`running`、`queued`、`done`、`failed`、`idle`；`step`/`total`、`eta`、`note`、`run` 都可省略。
-- 进度条宽 10 格，用 `█` 和 `░`（ASCII 模式下用 `#` 和 `.`）。
-- 命令失败（退出码非 0、超时、输出不是合法 JSON）：保留上一次成功的数据，标"stale N min"，并在下面显示错误的第一行。
+- `state` is one of `running`, `queued`, `done`, `failed`, `idle`; `step`/`total`, `eta`, `note` and `run` can all be left out.
+- The progress bar is 10 cells wide, drawn with `█` and `░` (`#` and `.` in ASCII mode).
+- When the command fails (a non-zero exit code, a timeout, output that is not valid JSON), the last good data is kept and marked "stale N min", and the first line of the error is shown below it.
 
-### 安全：第一次要你确认
+### Security: it asks you the first time
 
-状态命令是任意 shell 命令。在某个项目里第一次运行前，"现在"一栏先显示 argv 和一个 **Allow** 按钮，你确认后才运行；确认记录是"项目根 + argv"的哈希，存在 `$.store`（每台机器自己的，不进 git）。argv 一改就要重新确认。因此别人 clone 下来的项目不会在你没看过的情况下运行里面的命令。
+The status command is an arbitrary shell command. Before it runs for the first time in a project, the "Now" block shows the argv and an **Allow** button, and it runs only after you confirm. The confirmation is recorded as a hash of "project root + argv" in `$.store` (each machine has its own; it does not go into git). Changing the argv asks again. So a project that someone else cloned never runs a command you have not seen.
 
-- **批准的是命令行本身，不包括脚本里写了什么**：`["bash", "scripts/decision_status.sh"]` 批准之后，脚本文件再被改（比如 `git pull` 带来别人的新版本），不会再问一次，和你在 shell 里跑这个脚本是同样的信任。
-- **看到的就是将要运行的**：pane 里逐词显示那条 argv；含空格或 shell 特殊字符的词加单引号（`~/x.sh` 这种开头的 `~` 也加，因为 shell 会展开它），控制字符、不可见字符和 pane 会画成别的样子的字符写成 `<U+200B>` 这样的形式。命令太长、pane 放不下时不提供 **Allow**（见[界面](#界面)）。
-- **按下 Allow 的那一刻**，mod 会再读一次 `config.json`：命令在这期间已经变了，就什么都不批准，提示你先看新的命令；运行之前还会核对一次，pane 上显示的、`config.json` 里的和你批准过的三者逐字相同。命令跑着的时候 `config.json` 里的命令换了，那条命令的结果丢掉，不会盖住"等你批准"的新命令。
+- **What is approved is the command line, not what the script contains.** After `["bash", "scripts/decision_status.sh"]` is approved, a later change to the script file (say `git pull` brings in someone's new version) does not ask again; it is the same trust as running that script in your shell.
+- **What you see is what will run.** The pane shows the argv word by word. A word with spaces or shell-special characters is put in single quotes (a leading `~` as in `~/x.sh` too, because the shell would expand it), and control characters, invisible characters and characters the pane would draw as something else are written in the form `<U+200B>`. When the command is too long for the pane, **Allow** is not offered (see [The pane](#the-pane)).
+- **At the moment you press Allow** the mod reads `config.json` once more: if the command has changed in the meantime, nothing is approved and you are asked to look at the new command first. Before it runs there is one more check, that what the pane shows, what `config.json` holds and what you approved are identical letter for letter. If the command in `config.json` is replaced while a command is running, that command's result is thrown away and does not cover the new command that is waiting for approval.
 
-命令只在 pane **显示着**的时候运行（不显示就不跑，省得无谓地占用机器）。`/tree` 和你按 Allow 的那一下会马上跑一次，之后按 `intervalSec` 的节奏。命令用 argv 直接启动（不经 shell），所以要用管道、重定向时自己包一层脚本，例如 `["bash", "scripts/decision_status.sh"]`。
+The command runs only while the pane is **showing** (it does not run when the pane is not shown, so as not to occupy the machine for nothing). `/tree` and the moment you press Allow run it once right away, and after that it follows `intervalSec`. The command is started directly from the argv (not through a shell), so if you need pipes or redirection, wrap them in a script of your own, for example `["bash", "scripts/decision_status.sh"]`.
 
-## 语言
+## Language
 
-- 技术名词（run 名、`db_pool_cap`、`P99`、`seed`、命令名…）永远保留英文。
-- 界面固定文字、命令和工具的回执跟随你**最近一次的输入**：含 CJK 字符就是中文，有至少 6 个英文字母且没有中文就是英文；以 `/` 开头的输入和太短的输入不改变语言。结果按项目存进 `$.store`，下次打开这个项目时先用上次的，再没有就用英文。
-- `config.json` 里 `display.language` 为 `"zh"` 或 `"en"` 时固定，不跟随输入（`/decide lang zh|en|auto`）。
-- 模型写进决定的标题、摘要、理由跟随你的输入语言；**已记录的节点内容永远不翻译**。
-- 给模型看的 system prompt 那一段是英文的（模型读的），其中写明了上一条规则。
+- Technical terms (run names, `db_pool_cap`, `P99`, `seed`, command names …) always stay in English.
+- The fixed text of the interface and the receipts of commands and tools follow **your most recent input**: if it contains CJK characters it is Chinese; if it has at least 6 Latin letters and no Chinese it is English; input that starts with `/` and input that is too short do not change the language. The result is stored per project in `$.store`; the next time the project is opened the last one is used first, and with none it is English.
+- When `display.language` in `config.json` is `"zh"` or `"en"` the language is fixed and does not follow your input (`/decide lang zh|en|auto`).
+- The titles, summaries and rationales the model writes into decisions follow the language you write in; **recorded node content is never translated**.
+- The system-prompt section the model sees is in English (the model reads it), and it states the rule above.
 
-## 需要知道的行为
+## Behavior to know about
 
-- **prompt 缓存**：system prompt 里那一段会随决定变化，而 session 级的段落变化会让从这里往后的缓存失效。所以 mod 只在**每个 turn 开始时**刷新一次这一段，同一个 turn 里不变。别的 session 刚写下的决定，要到本 session 的下一个 turn 才出现在模型的简报里（pane 在 5 秒内就会更新）。开启、暂停、恢复、切换 tree 这几件会让整段内容都变的事例外，立即重写。
-- **多 session**：session 之间不直接通信，只通过磁盘上的事件文件和 `config.json`。每个 session 对事件只新建文件、从不修改旧文件，所以并发安全。界面状态（选中、展开、过滤）是每个 session 自己的；记录到哪棵 tree 是整个项目共用的（见[多棵 tree](#多棵-tree)）。
-- **`/clear` 和 resume**：`/clear` 会清掉 session 的界面状态值，mod 会在下一次触碰时自动恢复（pane 不会变成"未记录"）；5 秒轮询跨 `/clear` 和 resume 继续。
-- **窄终端**：你自己 `/tree` 打开的 pane，≥ 110 列时停靠在右侧；更窄时以带边框的形式画在输入框上方，空间小，树优先显示，"现在"和详情等按剩余空间取舍。想看全貌就把终端拉宽，或者让模型调用 `decision_tree` 读文本版。屏幕完全不画 pane 时（比如不支持 pane 的界面），`/tree` 直接把树以文本返回。
-- **手机界面**（`mobile` surface）没有输入框和下拉，pane 是只读的：能看树，不能编辑。
-- **开启之后** `decision_log_start` 在已经开启过的 session 里仍然在工具列表里（工具注册之后不能撤销），再调用只会回答"已经开启"；新 session 在已开启的项目里只看到另外六个工具。
-- **重复导入**：同一个文件再 `/decide import` 一次不会重复加：id 和标题都已经在树里的节点原样保留，回执说有几个已经在了；文件里新增的节点才会被加进来。
-- **磁盘卡住**：mod 的读写（工具调用、命令、5 秒轮询）排成一条队，一个接一个做。一个操作 30 秒没有回应（比如网络盘停住了）就放弃，这次调用得到一句说明（"记录可能已改也可能没改，先调用 `decision_tree` 看一眼再重试"），排在后面的照常往下走；新开 tree 要复制很多文件，给 120 秒。事件文件夹读不出来时，pane 保持上次读到的样子，弹一次提示，读得出来了再弹一次。
-- **`config.json` 暂时读不到**（网络盘、正在被替换）：一次读失败不改变已知的状态，记录照常；文件"不见了"要连续两次 5 秒轮询都找不到才当真，所以 `git checkout`、编辑器保存造成的一瞬间的消失不会让记录停下。暂停、恢复、改语言、改自动打开这几个命令要改的是文件当前的样子，读不到时会拒绝并说明，什么都不写。
-- **ASCII 模式**（`asciiGlyphs: true`）改的是 mod 自己画的东西（状态符号、进度条、树连线）；Claude Code 自己的边框、关闭按钮等不受影响。
-- **未验证**：Windows 终端；2.1.296 以外的 Claude Code 版本（见下）。
+- **Prompt cache.** The system-prompt section changes with the decisions, and a change in a session-level section invalidates the cache from that point on. So the mod refreshes the section only **at the start of each turn**, and it does not change within a turn. A decision another session has just written shows up in this session's briefing to the model only at the next turn (the pane updates within 5 seconds). The exceptions are the things that change the whole section: turning recording on, pausing, resuming and switching trees rewrite it at once.
+- **Several sessions.** Sessions do not talk to each other directly, only through the event files on disk and `config.json`. Each session only creates new files for events and never modifies old ones, so concurrent use is safe. Interface state (selection, expansion, filters) belongs to each session; which tree recording goes to is shared by the whole project (see [Multiple trees](#multiple-trees)).
+- **`/clear` and resume.** `/clear` wipes the session's interface state values, and the mod restores them at the next touch (the pane does not turn into "not recording"); the 5-second poll carries on across `/clear` and resume.
+- **Narrow terminals.** A pane you open yourself with `/tree` docks on the right from 110 columns; narrower, it is drawn in a frame above the prompt, where space is small: the tree takes priority, and the "Now" block and the details get what is left. To see everything, widen the terminal, or ask the model to call `decision_tree` for the text version. When the screen does not draw a pane at all (an interface that does not support panes, say), `/tree` returns the tree as text.
+- **Mobile** (the `mobile` surface) has no text field and no dropdown, so the pane is read-only there: you can see the tree but cannot edit it.
+- **After recording is on**, `decision_log_start` stays in the tool list of sessions that were already running (a registered tool cannot be taken back); calling it again only answers "already on". A new session in a project that is already on sees only the other six tools.
+- **Importing twice.** Running `/decide import` on the same file again does not duplicate anything: nodes whose id and title are already in the tree are left as they are and the receipt says how many were already there; only the nodes new to the file are added.
+- **A stuck disk.** The mod's reads and writes (tool calls, commands, the 5-second poll) are queued and done one after another. An operation that gets no answer for 30 seconds (a network disk that has stalled, say) is given up on. That call gets an explanation ("no answer after 30 s (the disk or a command is not responding). The record may or may not have been changed; call decision_tree to check before trying again."), and what is queued behind it goes on as usual. Opening a tree copies many files, so it gets 120 seconds. When the events folder cannot be read, the pane keeps what it last read and shows one notice, and one more when it can be read again.
+- **`config.json` temporarily unreadable** (a network disk, or the file being replaced). One failed read does not change the known state, and recording carries on as usual; the file counts as gone only if two 5-second polls in a row cannot find it, so the moment of absence caused by `git checkout` or an editor's save does not stop recording. Pause, resume, changing the language and changing auto-open need the file as it currently is; when it cannot be read they refuse and say so, and write nothing.
+- **ASCII mode** (`asciiGlyphs: true`) changes only what the mod draws itself (status symbols, progress bars, tree connectors); Claude Code's own borders, close button and so on are not affected.
+- **Not verified**: Windows terminals; Claude Code versions other than 2.1.296 (see [Implementation notes and assumptions](#implementation-notes-and-assumptions)).
 
-## 开发和测试
+## Development and tests
 
 ```bash
-claude plugin validate  <folder>     # 清单、marketplace、hooks 模块
-tsc -p <folder>                      # 类型检查（mod 加载过一次后，.claude-plugin/types 才会生成）
-claude plugin test      <folder>     # 335 个测试：单元、pane（terminal/desktop/vscode/mobile 四种界面）、引擎级连线
+claude plugin validate  <folder>     # manifests, marketplace, hooks module
+tsc -p <folder>                      # type-check (.claude-plugin/types is generated once the mod has been loaded)
+claude plugin test      <folder>     # 335 tests: unit, pane (terminal/desktop/vscode/mobile surfaces), engine-level wiring
 ```
 
-代码结构：
+Code layout:
 
 ```
-hooks/register.tsx     只做注册：session.start / session.end / tool.call / command.run /
+hooks/register.tsx     registration only: session.start / session.end / tool.call / command.run /
                        turn.start / prompt.compose / prompt.submit / ui.render / ui.focus
-lib/project.ts         找项目根       lib/events.ts   事件文件名、校验、id、tree 名
-lib/journal.ts         增量读写事件（每棵 tree 一个 Journal）   lib/replay.ts   重放成树
-lib/config.ts          config.json 的读和局部修改   lib/io.ts   文件读写的接口
-lib/tree.ts            排序、过滤、主线  lib/ops.ts   一次写入 = 校验 + 事件（工具和命令共用），
-                       新开 tree、切换、列出、看日志也在这里
-lib/versions.ts        "版本"怎么写、怎么解析（#N、时间、节点）
-lib/tools.ts           工具的 schema   lib/commands.ts /decide 的解析
-lib/prompt.ts          system prompt 那一段
-lib/status.ts          状态命令输出的解析、过期判断、批准时命令的显示
-lib/width.ts spans.ts glyphs.ts layout.ts  显示宽度、截断换行、符号、pane 的版面（纯函数）
-lib/i18n.ts            中英文文案
-lib/view.tsx           把版面画成元素（Box/Text/Button/Select/Input）
-lib/runtime.ts         把以上串起来：轮询、状态、命令、工具
-lib/port.ts state.ts   Port：runtime 需要的 `$` 的最小接口；`$.state` 的初值
-types/index.d.ts       PluginState 契约
-tests/                 内存里的 FakeEngine + 引擎级测试
+lib/project.ts         finding the project root     lib/events.ts   event file names, validation, ids, tree names
+lib/journal.ts         incremental reads and writes of events (one Journal per tree)   lib/replay.ts   replaying into a tree
+lib/config.ts          reading and partly modifying config.json   lib/io.ts   the file-access interface
+lib/tree.ts            ordering, filtering, the mainline   lib/ops.ts   one write = validation + events (shared by tools and
+                       commands); opening and switching trees, listing them and showing the log live here too
+lib/versions.ts        how a "version" is written and parsed (#N, times, nodes)
+lib/tools.ts           the tools' schemas   lib/commands.ts   parsing of /decide
+lib/prompt.ts          the system-prompt section
+lib/status.ts          parsing the status command's output, staleness, showing the command at approval
+lib/width.ts spans.ts glyphs.ts layout.ts  display width, truncation and wrapping, symbols, the pane's layout (pure functions)
+lib/i18n.ts            Chinese and English text
+lib/view.tsx           draws the layout as elements (Box/Text/Button/Select/Input)
+lib/runtime.ts         ties the above together: polling, state, commands, tools
+lib/port.ts state.ts   Port: the minimal interface of `$` that the runtime needs; initial values of `$.state`
+types/index.d.ts       the PluginState contract
+tests/                 an in-memory FakeEngine plus engine-level tests
 ```
 
-为什么有 `Port`：引擎不允许把 `$` 传过 import 边界（`$` 只能流向同一个文件里的函数），所以 `register.tsx` 把用到的 `$` 方法包成一个普通对象 `Port`，`lib/` 只认 `Port`。好处是 `lib/` 可以在内存里的假引擎上完整测试。
+Why there is a `Port`: the engine does not let `$` cross an import boundary (`$` can only flow into functions in the same file), so `register.tsx` wraps the `$` methods it uses into a plain object, the `Port`, and `lib/` knows only the `Port`. The benefit is that `lib/` can be tested in full on an in-memory fake engine.
 
-## 接入你自己的项目
+## Using it in your own project
 
-一个典型的接入流程：
+A typical way to bring a project in:
 
-1. **开启**：在项目的 Claude Code 里说"从现在开始记录决定"，或用 `/decide start <项目名>`。
-2. **种子数据（可选）**：已经做过的决定，另外整理成一个节点数组（格式见[导入种子数据](#导入种子数据)，每个节点加 `id`），放进项目（比如 `docs/decision_seed.json`），用 `/decide import docs/decision_seed.json` 导入。
-3. **状态命令（可选）**：写一个脚本（比如 `scripts/decision_status.sh`），读你的任务队列、日志里的步数等，按上面的[输出契约](#输出契约)往 stdout 打印 JSON；让 Claude Code 帮你写也行。然后在 `config.json` 里加：
+1. **Turn it on.** In the project's Claude Code say "start recording decisions from now", or use `/decide start <project name>`.
+2. **Seed data (optional).** Put the decisions already made into a node array of their own (format in [Importing seed data](#importing-seed-data), each node with an `id`), keep it in the project (say `docs/decision_seed.json`), and import it with `/decide import docs/decision_seed.json`.
+3. **A status command (optional).** Write a script (say `scripts/decision_status.sh`) that reads your job queue, the step counts in your logs and so on, and prints JSON to stdout following the [output contract](#output-contract) above; you can ask Claude Code to write it for you. Then add to `config.json`:
 
    ```json
    "status": { "argv": ["bash", "scripts/decision_status.sh"], "intervalSec": 30, "timeoutSec": 15 }
    ```
 
-   或者开启时让模型传 `statusArgv`。第一次显示时在 pane 里按 **Allow**。
-4. `git add .claude/decisions` 并提交。
-5. 之后想试另一条路线，不要把原来的记录弄乱：`/decide log` 看事件编号，`/decide new <名字> --at #17 --title "说明"` 开一棵新的接着记，`/decide use main` 随时切回去，见[多棵 tree](#多棵-tree)。提醒：切换对**整个项目**生效，无人值守的 session 也会跟着记到新 tree 里；想让它们继续记原来的 tree，用 `--stay` 新开，等它们空下来再 `/decide use <名字>`。
+   or have the model pass `statusArgv` when it turns recording on. Press **Allow** in the pane the first time it shows.
+4. `git add .claude/decisions` and commit.
+5. Later, to try another line without messing up the record: `/decide log` shows the event numbers, `/decide new <name> --at #17 --title "description"` opens a new tree and keeps recording there, and `/decide use main` switches back at any time, see [Multiple trees](#multiple-trees). A reminder: a switch applies to the **whole project**, so unattended sessions follow it too and record into the new tree. To let them keep recording into the original, open the tree with `--stay`, and run `/decide use <name>` once they are idle.
 
-## 实现取舍与假设
+## Implementation notes and assumptions
 
-最初的设计说明（代码注释里的 `spec 9.2` 这类编号指它的章节号；说明本身没有放进这个仓库）逐条实现了，以下是说明没规定、或实现时做了取舍的地方：
+The original design brief (numbers like `spec 9.2` in code comments are its section numbers; the brief itself is not in this repository) is implemented point by point. These are the places where it was silent, or where the implementation made a trade-off:
 
-- **API 版本**：按 2.1.296 写；换了版本先跑 `validate` 和 `test`（见[前提](#前提)）。
-- **prompt 刷新时机**：每个 turn 开始时刷新一次，而不是每次请求（见上，为了保住 prompt 缓存）。
-- **状态命令只在 pane 显示着时运行**。
-- **"主线"** 取 `trunk: true` 的节点，按树的顺序列出（标题截断）。
-- **暂停期间**，只有模型的写工具被挡；你自己的命令和 pane 编辑照常。
-- **斜杠命令**（以 `/` 开头的输入）不参与语言判断。
-- **额外的东西**：`decision_tree` 工具支持 `id` 取详情；`/decide lang`、`/decide autoopen`；`/decide import` 也接受 `{ "nodes": [...] }`；键位提示里 `k`/`j` 也能上下移动；选中行用 `❯` 标记。
-- **节点 id**：模型或命令没给 id 时，先由标题生成可读的 slug（`Use SQLite for cache` → `use-sqlite-for-cache`），标题里没有可用字符（比如全是中文）时才用 `d-<base36 时间戳>`；重复时加 `-2`、`-3`。这样 `/decide status <id> …` 手打起来更方便。
-- **事件序号**每个进程从 `0000` 开始；写文件前会检查同名文件是否存在，存在则序号加一。
-- **多棵 tree 是在最初的设计之外加的功能**。取舍：
-  - "版本"理解成 tree 的**事件历史上的一个点**（当前、第 N 个事件、某个时间点、记下某个节点的那一刻），不是打了标签的快照；
-  - 新开 tree 是复制一份事件文件再写一个 `fork` 事件（像 git 开分支），不是给节点加一个"属于哪棵 tree"的字段；原来那棵不会多任何文件；
-  - "当前记录到哪棵 tree"是 `config.json` 里**整个项目共用**的一个指针（所有 session 一起切，包括无人值守的），不是每个 session 各一个；每个 session 各有指针的做法留作以后的选项；
-  - 新开 tree 时不复制 `fork` 事件，所以从 fork 出来的 tree 再开新 tree，只带一个 `fork`，记的是直接的来源；
-  - 没有核对 tree 里实际有的事件数和 `fork.count` 是否相符：git 只带来一部分文件时，这棵 tree 会少几个节点，不会因此报错（后面引用那些节点的 `update`、`note` 事件会计成警告）。
-- **Ghostty**：pane 画出来的文字会过一遍过滤（emoji 序列、新 emoji、不可见字符），只影响画出来的样子，存的和给模型的仍是原文；见[Ghostty 和其他终端](#ghostty-和其他终端)。
-- **`display.autoOpen` 放在 `config.json` 里**（最初的设计里，用户偏好放 `$.store`，但 `config.json` 的示例里又有它）：这样一个项目在各台机器上行为一致，`/decide autoopen` 直接改它。**默认过滤不保存**：每个 session 打开时是默认视图，`a`/`p`/`h` 只管这个 session。
-- **事件时间戳有一个下限**：写入时取"本机时钟"和"已读到的最新事件 + 1 毫秒"中较晚的，见[数据格式](#数据格式)。多台机器、复制来的 tree 里，时钟慢的一方写的事件也不会排到它已经看到的事件前面。
-- **状态命令的批准只覆盖命令行**，不覆盖脚本内容，见["现在"一栏和状态命令](#现在一栏和状态命令)。
-- `plugin.json` 的 `author` 是占位的 `decision-tree contributors`，`marketplace.json` 同理，按需要改。
+- **API version**: written for 2.1.296; after changing versions, run `validate` and `test` first (see [Prerequisites](#prerequisites)).
+- **When the prompt refreshes**: once at the start of each turn rather than on every request (see above; it protects the prompt cache).
+- **The status command runs only while the pane is showing.**
+- **The "mainline"** is the nodes with `trunk: true`, listed in tree order (titles truncated).
+- **While paused**, only the model's write tools are blocked; your own commands and pane edits work as usual.
+- **Slash commands** (input that starts with `/`) take no part in language detection.
+- **Extras**: the `decision_tree` tool supports `id` for details; `/decide lang` and `/decide autoopen`; `/decide import` also accepts `{ "nodes": [...] }`; `k`/`j` also move up and down in the key hints; the selected row is marked with `❯`.
+- **Node ids**: when neither the model nor the command gives an id, a readable slug is made from the title first (`Use SQLite for cache` → `use-sqlite-for-cache`), and `d-<base36 timestamp>` is used only when the title has no usable characters (all Chinese, say); on a duplicate `-2`, `-3` is added. That makes `/decide status <id> …` easier to type by hand.
+- **Event sequence numbers** start from `0000` in each process; before writing a file the mod checks whether a file of the same name exists, and if it does the sequence number goes up by one.
+- **Multiple trees were added beyond the original design.** The trade-offs:
+  - a "version" is understood as a **point on a tree's event history** (the current one, the Nth event, a point in time, the moment a node was recorded), not a tagged snapshot;
+  - opening a tree copies the event files and then writes a `fork` event (like branching in git), rather than adding a "belongs to which tree" field to nodes; the original gains no files;
+  - "which tree is being recorded to" is a **single pointer for the whole project** in `config.json` (all sessions switch together, unattended ones too), not one per session; a pointer per session is left as a later option;
+  - a `fork` event is not copied when a tree is opened, so a tree opened from a fork carries just one `fork`, recording its direct source;
+  - the number of events actually in a tree is not checked against `fork.count`: when git brings only some of the files, the tree is short a few nodes and nothing reports an error (the `update` and `note` events that refer to those nodes later are counted as warnings).
+- **Ghostty**: the text the pane draws goes through a filter (emoji sequences, new emoji, invisible characters), which changes only how it is drawn; what is stored and what the model gets stays the original text. See [Ghostty and other terminals](#ghostty-and-other-terminals).
+- **`display.autoOpen` lives in `config.json`** (in the original design user preferences were to live in `$.store`, but the `config.json` example also had it). That way a project behaves the same on every machine, and `/decide autoopen` changes it directly. **The default filter is not saved**: each session opens with the default view, and `a`/`p`/`h` apply to that session only.
+- **Event timestamps have a floor**: when writing, the later of the local clock and the newest event read plus 1 millisecond is used, see [Data format](#data-format). In trees from several machines, or copied ones, events written by the machine with the slower clock still do not sort before events it has already seen.
+- **Approving the status command covers only the command line**, not the script's contents, see [The "Now" block and the status command](#the-now-block-and-the-status-command).
+
+## Authors
+
+- [Xiaowen Zhang](https://github.com/xwzhang98): author and maintainer.
+- Built together with [Claude](https://claude.com/claude-code) (Anthropic) in Claude Code sessions.
+
+## License
+
+[MIT](LICENSE) © 2026 Xiaowen Zhang

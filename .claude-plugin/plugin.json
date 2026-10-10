@@ -4,6 +4,11 @@
   "description": "Records a project's decisions as a tree and shows it in a docked pane.",
   "types": "./types/index.d.ts",
   "author": {
-    "name": "decision-tree contributors"
-  }
+    "name": "Xiaowen Zhang",
+    "url": "https://github.com/xwzhang98"
+  },
+  "homepage": "https://github.com/xwzhang98/decision-tree",
+  "repository": "https://github.com/xwzhang98/decision-tree",
+  "license": "MIT",
+  "keywords": ["decisions", "decision-log", "tree", "pane"]
 }
