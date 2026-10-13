@@ -37,7 +37,7 @@ export function mountPane<P extends RenderSurface>($: Engine, surface: P, o: Pan
   })
 }
 
-type El = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+export type El = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
 
 const isEl = (x: unknown): x is El => x !== null && typeof x === 'object'
 
@@ -94,6 +94,44 @@ export function keysOf(tree: unknown, type?: string): string[] {
   }
   walk(tree)
   return out
+}
+
+/** The blocks of the pane, top to bottom: the children of its column. */
+export function blocksOf(tree: unknown): unknown[] {
+  return isEl(tree) ? (tree.children ?? []) : []
+}
+
+/** The element drawn under `key`, wherever it sits. */
+export function elementOf(tree: unknown, key: string): El | undefined {
+  let found: El | undefined
+  const walk = (x: unknown) => {
+    if (found !== undefined || !isEl(x)) return
+    if (x.props?.key === key) {
+      found = x
+      return
+    }
+    for (const c of x.children ?? []) walk(c)
+  }
+  walk(tree)
+  return found
+}
+
+/** One piece of a drawn line: its text and the style of the `Text` it sits in (a bare string has none). */
+export type Run = { text: string; color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean }
+
+/** The pieces an element is made of, in order. */
+export function runsOf(x: unknown): Run[] {
+  if (!isEl(x)) return []
+  return (x.children ?? []).map((c): Run => {
+    const run: Run = { text: textOf(c) }
+    if (!isEl(c)) return run
+    const p = c.props ?? {}
+    if (typeof p.color === 'string') run.color = p.color
+    if (typeof p.backgroundColor === 'string') run.backgroundColor = p.backgroundColor
+    if (p.dimColor === true) run.dimColor = true
+    if (p.bold === true) run.bold = true
+    return run
+  })
 }
 
 /** The keys of the node rows (everything but the mod's own `~` controls). */

@@ -143,23 +143,24 @@ pane fills as it goes.
 What it leaves behind looks like this (an example for a made-up project, as Claude might record it):
 
 ```
-Decision tree · orders-api       Recording · 6 decisions · updated 12:00
-────────────────────────────────────────────────────────────────────────
-Mainline  Orders API: v1 in production
-────────────────────────────────────────────────────────────────────────
-❯ ✓ Orders API: v1 in production                                   03-14
-  ├ ✓ Use PostgreSQL for storage                                   01-20
-  ├ ✗ MongoDB for storage                                          01-20
-  ├ ✓ Serve a REST API, not GraphQL                                02-03
-  ├ ○ Move order processing to async workers                     Planned
-  └ ◌ Rate limiting at the gateway                              Proposed
-────────────────────────────────────────────────────────────────────────
-▾ Orders API: v1 in production                 ✓ Adopted · model · 03-14
+  Decision tree  orders-api   ● Recording   6 decisions   updated 12:00
+  Mainline  Orders API
+
+▌ ✓ Orders API: v1 in production
+    ✓ Use PostgreSQL for storage
+    ✗ MongoDB for storage
+    ✓ Serve a REST API, not GraphQL
+    ○ Move order processing to async workers
+    ◌ Rate limiting at the gateway
+  ─────────────────────────────────────────────────────────────────────
+▾ Orders API: v1 in production
+  ✓ Adopted   model   03-14
   REST service on PostgreSQL, live since March
   Sources  README.md  CHANGELOG.md
-────────────────────────────────────────────────────────────────────────
-k: ↑  j: ↓  Enter expand  e: Edit  p: Pending                 Warnings 0
-h: Hide rejected  a: All
+
+  ─────────────────────────────────────────────────────────────────────
+  k: ↑  j: ↓  Enter expand  e: Edit  p: Pending  h: Hide rejected
+  a: All
 ```
 
 It changes no file in your project (the record in `.claude/decisions/` apart), runs none of the project's code, starts no jobs and skips secrets such as `.env` files. It writes only through the ordinary `decision_record` tool, so everything it records can be edited in the pane, corrected with `/decide status`, or taken back with `/decide retract`, like any other node. It is a request to the model, not a program: what it records depends on what the project's files say and how the model reads them, so look the result over. Reading the project goes through the usual permission prompts of your Claude Code settings.
@@ -287,51 +288,67 @@ The model has `decision_new_tree` and `decision_use_tree`, and `decision_tree` c
 The title row carries `[sql-v3]` (`main` has none). When the pane is tall enough (16 rows or more) there is also a line under the title saying where the tree was opened from, followed by your `--title`. In a narrow pane that line is truncated, in a short pane it is left out.
 
 ```
-Decision tree [sql-v3] · demo    Recording · 4 decisions · updated 12:00
-from main at #4 (10-09 12:00) · SQL third try
-────────────────────────────────────────────────────────────────────────
-Mainline  Design v2 final
-────────────────────────────────────────────────────────────────────────
-  ✓ Design v2 final                                                10-08
-  ├ ✗ Keep pool count at 32                                        10-09
-  └ ✓ Gate: probe s1 passed                                        10-10
-❯   └ ○ SQL plan B
-────────────────────────────────────────────────────────────────────────
-▾ SQL plan B                                    ○ Planned · user · 10-10
-────────────────────────────────────────────────────────────────────────
-k: ↑  j: ↓  Enter expand  e: Edit  p: Pending                 Warnings 0
-h: Hide rejected  a: All
+  Decision tree  demo  [sql-v3]               ● Recording   4 decisions
+  from main at #4 (10-09 12:00) · SQL third try
+  Mainline  Design v2 final
+
+▎ ✓ Design v2 final
+    ✗ Keep pool count at 32
+    ✓ Gate: probe s1 passed
+▌     ○ SQL plan B
+  ─────────────────────────────────────────────────────────────────────
+▾ SQL plan B
+  ○ Planned   user   10-10
+
+  ─────────────────────────────────────────────────────────────────────
+  k: ↑  j: ↓  Enter expand  e: Edit  p: Pending  h: Hide rejected
+  a: All
 ```
 
 ## The pane
 
-This is the pane as it really draws (72 columns wide, English interface; the data is illustrative):
+![The pane: title row, mainline, tree with the selected row highlighted, details and key hints](docs/pane.png)
+
+*An illustration drawn from the pane's own layout code with a sample tree. The fonts and colors are those of your terminal and your Claude Code theme.*
+
+The same thing as text, as the layout really draws it (72 columns wide, English interface; the data is illustrative):
 
 ```
-Decision tree · demo             Recording · 3 decisions · updated 12:00
-────────────────────────────────────────────────────────────────────────
-Now
-  ZETA    gateway s0      ████████░░  3400/4000  ~23:50  warming up
-  BETA-0  ablate_wide s0  █░░░░░░░░░   420/4000  ~09:10
-  GAMMA                   idle
-  Next  gate → probe s1 (~06:15)
-  ! GAMMA idle
-────────────────────────────────────────────────────────────────────────
-Mainline  Design v2 final
-────────────────────────────────────────────────────────────────────────
-❯ ✓ Design v2 final                                                10-08
-  ├ ✗ Keep pool count at 32                                        10-09
-  └ ✓ Gate: probe s1 passed                                        10-10
-────────────────────────────────────────────────────────────────────────
-▾ Design v2 final                               ✓ Adopted · user · 10-08
-────────────────────────────────────────────────────────────────────────
-k: ↑  j: ↓  Enter expand  e: Edit  p: Pending                 Warnings 0
-h: Hide rejected  a: All  s: Now
+  Decision tree  demo         ● Recording   3 decisions   updated 12:00
+
+  Mainline  Design v2 final
+  ─────────────────────────────────────────────────────────────────────
+  Now
+    ZETA    gateway s0      ████████░░  3400/4000  ~23:50  warming up
+    BETA-0  ablate_wide s0  █░░░░░░░░░   420/4000  ~09:10
+    GAMMA                   idle
+    Next  gate → probe s1 (~06:15)
+    ! GAMMA idle
+
+▌ ✓ Design v2 final
+    ✗ Keep pool count at 32
+    ✓ Gate: probe s1 passed
+  ─────────────────────────────────────────────────────────────────────
+▾ Design v2 final
+  ✓ Adopted   user   10-08
+
+  ─────────────────────────────────────────────────────────────────────
+  k: ↑  j: ↓  Enter expand  e: Edit  p: Pending  h: Hide rejected
+  a: All  s: Now
 ```
 
-From top to bottom: the title row (project name, recording state, number of decisions, update time); the "Now" block (the status command's data); the mainline; the tree; the selected node's details (rationale, evidence, sources, what replaces what, notes); the key hints and the warning count. Outside `main` the title row carries `[tree name]` and the line below it says where the tree was opened from (see [Multiple trees](#multiple-trees)). In the Chinese interface the same labels read `现在`, `主线`, `采用` and `下一步`.
+From top to bottom:
 
-When the window is too short, the "Now" block is dropped first, then the details are compressed and dropped, so that the tree keeps a few rows; the key hints at the bottom never give way (two lines at 12 rows or more, one line below that; when too narrow, the less common keys go first). A status command awaiting your approval is the exception: it takes priority over the details, which are folded away first when space runs short. If even the whole command plus its button does not fit, no button is drawn and the "Now" block shows only one line, `A status command awaits your OK; enlarge the pane to read it.`; the command and **Allow** appear once the pane is larger.
+- **Title row**: the project name, whether it is recording, how many decisions the record holds and when it last changed. In a narrow pane the update time goes first, then the count. Outside `main` the row carries `[tree name]`, and a line under it says where the tree was opened from (see [Multiple trees](#multiple-trees)).
+- **Mainline**: the decisions that make up the project's path, oldest first. The newest is in full strength; older ones are dim and cut short. In the tree below, the rows on the mainline have a thin line in the margin (`▎`, in the theme's `merged` color).
+- **Now**, only when the project has a status command: its live data, see [The "Now" block and the status command](#the-now-block-and-the-status-command).
+- **Tree**: one row per decision, a status symbol and a title, indented two columns for each level. A row says nothing else, so the tree stays easy to scan; `+2` at the end of a row counts children that are folded away. The selected row is a bar across the pane with `▌` in the margin.
+- **Details** of the selected decision: its status, who decided it and when, the summary, then rationale, evidence, sources, what replaces what and notes, each under a label of its own.
+- **Key hints** at the bottom; the number of warnings appears at their right end only when there are any.
+
+In the Chinese interface the same labels read `现在`, `主线`, `采用` and `下一步`.
+
+From 20 rows up, blank rows set the parts apart. A docked pane keeps the key hints on its last rows, so a short tree leaves blank rows above them (the examples here cut those short). When the window is too short, the "Now" block is dropped first, then the details are compressed and dropped, so that the tree keeps a few rows; the key hints at the bottom never give way (two lines at 12 rows or more, one line below that; when too narrow, the less common keys go first). A status command awaiting your approval is the exception: it takes priority over the details, which are folded away first when space runs short. If even the whole command plus its button does not fit, no button is drawn and the "Now" block shows only one line, `A status command awaits your OK; enlarge the pane to read it.`; the command and **Allow** appear once the pane is larger.
 
 Status symbols and colors:
 
@@ -347,7 +364,9 @@ Status symbols and colors:
 | `superseded` | Superseded | 被取代 | ⊘ | `/` | dim |
 | `deferred` | Deferred | 暂缓 | ‖ | `"` | dim |
 
-◐ ○ ◌ ⊘ and the box-drawing characters have "ambiguous width" in Unicode, and some terminals draw them two columns wide. By default they are counted as one column (as Claude Code's own layout does). If your terminal draws them crooked, set `display.asciiGlyphs: true` in `config.json`, and the status symbols, progress bars and tree connectors switch to ASCII. For Ghostty see [the next section](#ghostty-and-other-terminals).
+Decisions that are over or parked (rejected, withdrawn, superseded, deferred) are drawn dim, title and all.
+
+◐ ○ ◌ ⊘ and the line and block characters (─ ▎ ▌ █ ░) have "ambiguous width" in Unicode, and some terminals draw them two columns wide. By default they are counted as one column (as Claude Code's own layout does). If your terminal draws them crooked, set `display.asciiGlyphs: true` in `config.json`, and the status symbols, rules, margin marks and progress bars switch to ASCII. For Ghostty see [the next section](#ghostty-and-other-terminals).
 
 **Keyboard** (when the pane has the keyboard: `/tree`, or `ctrl+x` then `Tab`, hands the keyboard to the pane; Esc gives it back to the prompt):
 
@@ -383,7 +402,7 @@ Han characters, fullwidth punctuation, Latin letters with combining marks (é), 
 
 Setting `grapheme-width-method` to `unicode` (the default) or `legacy` makes no difference to the pane: after the filter both algorithms count the same.
 
-**2. Glyphs.** The status symbols ✓ ✗ ◐ ○ ◌ ⊘ ‖, the progress bar █ ░ and the tree connectors ├ └ │ ─ are all "ambiguous width" characters; Ghostty counts them as one column, the same as the mod. Ghostty draws box-drawing and block characters itself; the geometric shapes (◐ ○ ◌ ⊘) depend on the font, and when a glyph is missing Ghostty falls back to another font, which can make them look too large or too small. In that case pick one of two:
+**2. Glyphs.** The status symbols ✓ ✗ ◐ ○ ◌ ⊘ ‖, the progress bar █ ░, the rules ─ and the margin marks ▎ ▌ are all "ambiguous width" characters; Ghostty counts them as one column, the same as the mod. Ghostty draws box-drawing and block characters itself; the geometric shapes (◐ ○ ◌ ⊘) depend on the font, and when a glyph is missing Ghostty falls back to another font, which can make them look too large or too small. In that case pick one of two:
 
 - set `display.asciiGlyphs: true` in `config.json`, and everything becomes ASCII;
 - or point those code points at a monospace font that has them. In the Ghostty config:
@@ -545,7 +564,7 @@ A minimal example:
 - `retract`: marks the node as retracted; it is hidden by default and can be shown in the filter.
 - `fork`: only the first one counts (a tree is opened once). It is not a decision: it does not appear in the tree and takes no version number; it only records where this tree came from (`base`, the description, who opened it, and when). A `base` that is not valid counts as one warning and is treated as absent.
 - `note`: appended to the node's list of notes.
-- A file that fails to parse, has an unknown version or has an unknown op is skipped and counted as a warning; the bottom row shows the number of warnings.
+- A file that fails to parse, has an unknown version or has an unknown op is skipped and counted as a warning; the number of warnings is shown at the right end of the key hints (only when there are any).
 - Conflicts: when two sessions change the same field, the one whose file name sorts later wins.
 
 ### Node ids
@@ -615,7 +634,7 @@ The command runs only while the pane is **showing** (it does not run when the pa
 - **Importing twice.** Running `/decide import` on the same file again does not duplicate anything: nodes whose id and title are already in the tree are left as they are and the receipt says how many were already there; only the nodes new to the file are added.
 - **A stuck disk.** The mod's reads and writes (tool calls, commands, the 5-second poll) are queued and done one after another. An operation that gets no answer for 30 seconds (a network disk that has stalled, say) is given up on. That call gets an explanation ("no answer after 30 s (the disk or a command is not responding). The record may or may not have been changed; call decision_tree to check before trying again."), and what is queued behind it goes on as usual. Opening a tree copies many files, so it gets 120 seconds. When the events folder cannot be read, the pane keeps what it last read and shows one notice, and one more when it can be read again.
 - **`config.json` temporarily unreadable** (a network disk, or the file being replaced). One failed read does not change the known state, and recording carries on as usual; the file counts as gone only if two 5-second polls in a row cannot find it, so the moment of absence caused by `git checkout` or an editor's save does not stop recording. Pause, resume, changing the language and changing auto-open need the file as it currently is; when it cannot be read they refuse and say so, and write nothing.
-- **ASCII mode** (`asciiGlyphs: true`) changes only what the mod draws itself (status symbols, progress bars, tree connectors); Claude Code's own borders, close button and so on are not affected.
+- **ASCII mode** (`asciiGlyphs: true`) changes only what the mod draws itself (status symbols, rules, margin marks, progress bars); Claude Code's own borders, close button and so on are not affected.
 - **Not verified**: Windows terminals; Claude Code versions other than 2.1.296 (see [Implementation notes and assumptions](#implementation-notes-and-assumptions)).
 
 ## Development and tests
@@ -623,7 +642,7 @@ The command runs only while the pane is **showing** (it does not run when the pa
 ```bash
 claude plugin validate  <folder>     # manifests, marketplace, hooks module
 tsc -p <folder>                      # type-check (.claude-plugin/types is generated once the mod has been loaded)
-claude plugin test      <folder>     # 355 tests: unit, pane (terminal/desktop/vscode/mobile surfaces), engine-level wiring
+claude plugin test      <folder>     # 372 tests: unit, pane (terminal/desktop/vscode/mobile surfaces), engine-level wiring
 ```
 
 Code layout:
@@ -678,7 +697,7 @@ The original design brief (numbers like `spec 9.2` in code comments are its sect
 - **While paused**, only the model's write tools are blocked; your own commands and pane edits work as usual.
 - **Slash commands** (input that starts with `/`) take no part in language detection, and neither do prompts that are not the person's own (notifications, scheduled tasks, other sessions, other plugins).
 - **`/decide init` hands its task over with `$.prompt.submit`**, as the person's own words (`asUser`). The engine checks that call and refuses it from inside a `command.run` hook (the hook holds the turn the prompt would wait for) and when the text begins with `/` (it would run as a command), so the task is worded not to begin with one and is submitted 250 ms after the command is done; a refusal is tried again 1 s and then 3 s later, and told in a toast if it still fails or if another plugin's hook drops the prompt. The call answers when the turn it starts begins, so nothing waits for it. The task is stateless: its first step reads the tree and stops if it already has decisions, which also covers running `/decide init` twice in a row.
-- **Extras**: the `decision_tree` tool supports `id` for details; `/decide lang` and `/decide autoopen`; `/decide import` also accepts `{ "nodes": [...] }`; `k`/`j` also move up and down in the key hints; the selected row is marked with `❯`.
+- **Extras**: the `decision_tree` tool supports `id` for details; `/decide lang` and `/decide autoopen`; `/decide import` also accepts `{ "nodes": [...] }`; `k`/`j` also move up and down in the key hints; the selected row is a highlighted bar with `▌` in the margin.
 - **Node ids**: when neither the model nor the command gives an id, a readable slug is made from the title first (`Use SQLite for cache` → `use-sqlite-for-cache`), and `d-<base36 timestamp>` is used only when the title has no usable characters (all Chinese, say); on a duplicate `-2`, `-3` is added. That makes `/decide status <id> …` easier to type by hand.
 - **Event sequence numbers** start from `0000` in each process; before writing a file the mod checks whether a file of the same name exists, and if it does the sequence number goes up by one.
 - **Multiple trees were added beyond the original design.** The trade-offs:

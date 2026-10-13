@@ -13,7 +13,7 @@ import { STATUSES } from './events'
 import { glyphOf } from './glyphs'
 import { statusLabel, t } from './i18n'
 import type { Dollar } from './io'
-import { layoutPane } from './layout'
+import { GUTTER, layoutPane } from './layout'
 import type { Block, FooterAction, FooterItem, FooterLine } from './layout'
 import type { Runtime } from './runtime'
 import { lineText } from './spans'
@@ -32,11 +32,12 @@ export function isNodeKey(key: string): boolean {
 const INLINE_ROWS = 16
 const MIN_ROWS = 6
 
-type Style = { color?: string; dimColor?: boolean; bold?: boolean; inverse?: boolean }
+type Style = { color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean; inverse?: boolean }
 
 function styleOf(s: Span): Style {
   const out: Style = {}
   if (s.color !== undefined) out.color = s.color
+  if (s.bg !== undefined) out.backgroundColor = s.bg
   if (s.dim === true) out.dimColor = true
   if (s.bold === true) out.bold = true
   if (s.inverse === true) out.inverse = true
@@ -89,6 +90,7 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
     now,
     statusInterval: project.config?.status?.intervalSec ?? null,
     canEdit,
+    pin: e.props.placement !== 'inline',
   })
 
   // ---- pieces of a line
@@ -98,7 +100,13 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
     return Object.keys(style).length === 0 ? s.text : <Text {...style}>{s.text}</Text>
   }
 
-  const lineEl = (line: Line): RenderElement => <Text wrap="truncate-end">{line.length === 0 ? ' ' : line.map(piece)}</Text>
+  /** The pieces of a line that show something: a span of no columns (the indent of a root) draws nothing. */
+  const pieces = (line: Line) => line.filter(s => s.text !== '').map(piece)
+
+  const lineEl = (line: Line): RenderElement => {
+    const kids = pieces(line)
+    return <Text wrap="truncate-end">{kids.length === 0 ? ' ' : kids}</Text>
+  }
 
   // ---- the footer
 
@@ -132,7 +140,7 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
   }
 
   const footerEl = (line: FooterLine): RenderElement => {
-    const parts: RenderElement[] = []
+    const parts: RenderElement[] = [<Text>{' '.repeat(GUTTER)}</Text>]
     line.items.forEach((item, k) => {
       if (k > 0) parts.push(<Text>{'  '}</Text>)
       parts.push(itemEl(item))
@@ -158,10 +166,12 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
       return (
         <Box flexDirection="column">
           {lineEl(b.title)}
-          <Text dimColor wrap="truncate-end">
-            {t(lang, 'edit.mobile')}
-          </Text>
-          {cancel}
+          <Box flexDirection="column" paddingLeft={GUTTER}>
+            <Text dimColor wrap="truncate-end">
+              {t(lang, 'edit.mobile')}
+            </Text>
+            {cancel}
+          </Box>
         </Box>
       )
     }
@@ -169,34 +179,36 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
     return (
       <Box flexDirection="column">
         {lineEl(b.title)}
-        <Select
-          key={CONTROL + 'status'}
-          label={t(lang, 'edit.status')}
-          options={options}
-          value={edit.status}
-          onSelect={value => {
-            void rt.editStatus($, value).catch(() => undefined)
-          }}
-        />
-        <Input
-          key={CONTROL + 'summary'}
-          label={t(lang, 'edit.summary')}
-          placeholder={t(lang, 'edit.summaryHint')}
-          value={edit.summary}
-          autoFocus
-          onInput={value => {
-            void rt.editSummary($, value).catch(() => undefined)
-          }}
-          onSubmit={value => {
-            void rt.saveEdit($, { summary: value }).catch(() => undefined)
-          }}
-        />
-        <Box flexDirection="row">
-          <Button key={CONTROL + 'save'} variant="primary" onPress={run(() => rt.saveEdit($))}>
-            {t(lang, 'edit.save')}
-          </Button>
-          <Text>{'  '}</Text>
-          {cancel}
+        <Box flexDirection="column" paddingLeft={GUTTER}>
+          <Select
+            key={CONTROL + 'status'}
+            label={t(lang, 'edit.status')}
+            options={options}
+            value={edit.status}
+            onSelect={value => {
+              void rt.editStatus($, value).catch(() => undefined)
+            }}
+          />
+          <Input
+            key={CONTROL + 'summary'}
+            label={t(lang, 'edit.summary')}
+            placeholder={t(lang, 'edit.summaryHint')}
+            value={edit.summary}
+            autoFocus
+            onInput={value => {
+              void rt.editSummary($, value).catch(() => undefined)
+            }}
+            onSubmit={value => {
+              void rt.saveEdit($, { summary: value }).catch(() => undefined)
+            }}
+          />
+          <Box flexDirection="row">
+            <Button key={CONTROL + 'save'} variant="primary" onPress={run(() => rt.saveEdit($))}>
+              {t(lang, 'edit.save')}
+            </Button>
+            <Text>{'  '}</Text>
+            {cancel}
+          </Box>
         </Box>
       </Box>
     )
@@ -212,7 +224,7 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
       case 'row':
         return (
           <Button key={b.id} label={lineText(b.line).trim()} plain onPress={run(() => rt.press($, b.id))}>
-            {b.line.map(piece)}
+            {pieces(b.line)}
           </Button>
         )
       case 'page':
@@ -223,9 +235,11 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
         )
       case 'allow':
         return (
-          <Button key={CONTROL + 'allow'} variant="primary" onPress={run(() => rt.approveStatus($, b.argv))}>
-            {b.label}
-          </Button>
+          <Box paddingLeft={GUTTER}>
+            <Button key={CONTROL + 'allow'} variant="primary" onPress={run(() => rt.approveStatus($, b.argv))}>
+              {b.label}
+            </Button>
+          </Box>
         )
       case 'edit':
         return editEl(b)

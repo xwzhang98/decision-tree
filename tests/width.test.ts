@@ -79,6 +79,36 @@ test('wrap breaks at spaces and between CJK characters', () => {
   }
 })
 
+test('wrap keeps closing marks off the start of a line and opening brackets off the end', () => {
+  // the stop would start the second line: the character before it goes down with it
+  expect(wrap('池的大小，线程', 8)).toEqual(['池的大', '小，线程'])
+  // an opening bracket would end the first line: it goes down to what it opens
+  expect(wrap('池的大（默认）', 8)).toEqual(['池的大', '（默认）'])
+  expect(wrap('选择连接池（默认值）。', 12)).toEqual(['选择连接池', '（默认值）。'])
+  // two closing marks in a row stay with the text before them
+  expect(wrap('池的大）。线', 8)).toEqual(['池的', '大）。线'])
+  // the same for the plain brackets and stops next to CJK characters, and for the dash and the ellipsis
+  expect(wrap('池的大小(默认)', 9)).toEqual(['池的大小', '(默认)'])
+  expect(wrap('池的大小……还有', 8)).toEqual(['池的大', '小……还有'])
+  expect(wrap('池的大小——还有', 8)).toEqual(['池的大', '小——还有'])
+  // a space is a break of its own: nothing moves
+  expect(wrap('池的大小 ，线程', 8)).toEqual(['池的大小', '，线程'])
+  // the text is whole, every line fits, and no mark is on an edge it must not touch (from the width that holds the
+  // longest word with two marks after it)
+  const prose = '先把连接池的大小定为 32，再看 P99 的变化（见 exp-2）；如果没有改善，就改成按比例分配——线程、队列也一样。结论：采用“比例”方案。'
+  for (let width = 10; width <= 40; width++) {
+    const lines = wrap(prose, width)
+    expect(lines.join(' ').replace(/ /g, '')).toBe(prose.replace(/ /g, ''))
+    for (const line of lines) {
+      expect(strWidth(line) <= width).toBe(true)
+      expect(/^[，。、；：！？）”…—,.;:!?)]/.test(line)).toBe(false)
+      expect(/[（“(]$/.test(line)).toBe(false)
+    }
+  }
+  // too narrow to move anything: the lines still fit
+  for (const line of wrap('池，的。大）小', 2)) expect(strWidth(line) <= 2).toBe(true)
+})
+
 // ---------------------------------------------------------------- drawable: text every terminal counts the same
 //
 // Terminals disagree about emoji sequences: is a heart with a selector one group of cells or two,

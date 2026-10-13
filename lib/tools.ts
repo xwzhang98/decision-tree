@@ -57,10 +57,14 @@ const EVIDENCE_ITEM = {
 }
 
 const FIELDS = {
-  title: { type: 'string', description: 'A short statement of the decision. Technical terms in English; the rest in the language the user writes in.' },
+  title: {
+    type: 'string',
+    description:
+      'A short statement of the decision: one line, about 40 characters at most (the pane shows it on one row); the detail goes in summary and rationale. Technical terms in English; the rest in the language the user writes in.',
+  },
   status: { enum: [...STATUSES] },
   kind: { enum: KINDS, default: 'decision' },
-  trunk: { type: 'boolean', description: 'True for a step on the project mainline (shown as a line across the top of the pane).' },
+  trunk: { type: 'boolean', description: 'True for a step on the project mainline (listed in the Mainline line at the top of the pane and marked by a thin line beside its row).' },
   summary: { type: 'string', description: 'The conclusion in one line.' },
   rationale: { type: 'string', description: 'Why, in a few sentences.' },
   decidedBy: { enum: DECIDERS, description: '"user" when the user decided, "gate" when a rule agreed beforehand decided, "model" for your own call.' },

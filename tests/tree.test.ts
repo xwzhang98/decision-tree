@@ -38,8 +38,7 @@ function mk(id: string, parent: string | null, over: Partial<DtNode> = {}): DtNo
 }
 
 const UI: Pick<DtUi, 'expanded' | 'collapsed' | 'filter'> = { expanded: [], collapsed: [], filter: 'default' }
-const rowsOf = (nodes: DtNode[], ui: Partial<typeof UI> = {}, ascii = false) =>
-  visibleRows(buildIndex({ nodes }), { ui: { ...UI, ...ui }, nowMs: NOW, ascii })
+const rowsOf = (nodes: DtNode[], ui: Partial<typeof UI> = {}) => visibleRows(buildIndex({ nodes }), { ui: { ...UI, ...ui }, nowMs: NOW })
 const ids = (rows: { node: DtNode }[]) => rows.map(r => r.node.id)
 
 test('index: a missing parent makes a root, and siblings sort by decision time then record order', () => {
@@ -74,7 +73,7 @@ test('rows: trunk nodes open, everything else old is collapsed with a count of w
   expect(rows.find(r => r.node.id === 'root-a')!.isExpanded).toBe(true)
 })
 
-test('rows: guides are drawn with the last sibling closing its branch', () => {
+test('rows: a row is as deep as its parent plus one, and a node comes right after its parent', () => {
   const rows = rowsOf([
     mk('r1', null, { trunk: true }),
     mk('a1', 'r1', { trunk: true }),
@@ -83,9 +82,9 @@ test('rows: guides are drawn with the last sibling closing its branch', () => {
     mk('b1', 'r1', { trunk: true }),
     mk('b2', 'b1', { trunk: true }),
   ])
-  expect(rows.map(r => r.prefix)).toEqual(['', '├ ', '│ ├ ', '│ └ ', '└ ', '  └ '])
-  const plain = rowsOf([mk('r1', null, { trunk: true }), mk('a1', 'r1'), mk('a2', 'a1')], {}, true)
-  expect(plain.map(r => r.prefix)).toEqual(['', '` '])
+  expect(ids(rows)).toEqual(['r1', 'a1', 'a2', 'a3', 'b1', 'b2'])
+  expect(rows.map(r => r.depth)).toEqual([0, 1, 2, 2, 1, 2])
+  expect(rows.map(r => r.childCount)).toEqual([2, 2, 0, 0, 1, 0])
 })
 
 test('rows: pending work and branches changed in the last 48 hours are open down to the change', () => {
@@ -173,7 +172,7 @@ test('window: follows the selection, stays inside the rows, and reports what is 
 test('selection: a hidden selection falls back to its nearest drawn ancestor, else the first row', () => {
   const nodes = [mk('r', null, { trunk: true }), mk('t', 'r', { trunk: true }), mk('c', 't'), mk('x', 'r'), mk('y', 'x')]
   const idx = buildIndex({ nodes })
-  const rows = visibleRows(idx, { ui: UI, nowMs: NOW, ascii: false })
+  const rows = visibleRows(idx, { ui: UI, nowMs: NOW })
   expect(effectiveSelection(idx, rows, 'c')).toBe('c')
   expect(effectiveSelection(idx, rows, 'y')).toBe('x')
   expect(effectiveSelection(idx, rows, 'nobody')).toBe('r')

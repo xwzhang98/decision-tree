@@ -5,7 +5,8 @@
 import { test, expect } from 'claude-code/testing'
 
 import { strWidth } from '../lib/width'
-import { EDITABLE, SKETCH, SURFACES, keysOf, linesOf, manyNodes, mountPane, rowKeys, textOf } from './draw'
+import { EDITABLE, SKETCH, SURFACES, blocksOf, elementOf, keysOf, linesOf, manyNodes, mountPane, rowKeys, runsOf, textOf } from './draw'
+import type { El } from './draw'
 import { eventsOn, seed, slash, world } from './engine'
 import { ROOT } from './port'
 
@@ -56,7 +57,7 @@ for (const surface of SURFACES) {
       expect(new Set(keysOf(tree)).size).toBe(keysOf(tree).length) // keys are unique
       for (const line of linesOf(tree)) expect(strWidth(line)).toBeLessThanOrEqual(columns)
       // exactly one row carries the selection marker
-      const marked = linesOf(tree).filter(l => l.startsWith('❯'))
+      const marked = linesOf(tree).filter(l => l.startsWith('▌'))
       expect(marked).toHaveLength(1)
       expect(marked[0]).toContain('design v2')
       // a row's accessible label is its line, without the padding
@@ -74,10 +75,10 @@ test('the header, the mainline and the detail panel say where things stand', asy
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   const ui = await mountPane($, 'terminal', { columns: 80 })
   const text = linesOf(await ui.drawn()).join('\n')
-  expect(text).toContain('Decision tree · orders-api-rewrite')
-  expect(text).toContain('Recording · 10 decisions')
+  expect(text).toContain('Decision tree  orders-api-rewrite')
+  expect(text).toContain('● Recording   10 decisions')
   expect(text).toMatch(/Mainline .*gateway/)
-  expect(text).toContain('✓ Adopted · user') // the detail of the selected node
+  expect(text).toContain('✓ Adopted   user') // the detail of the selected node
   // the glyphs of the statuses on their rows
   const rows = linesOf(await ui.drawn())
   expect(rows.find(l => l.includes('v2.1：池的大小用绝对值'))).toContain('✗')
@@ -92,12 +93,13 @@ test('ASCII glyphs: display.asciiGlyphs swaps every symbol for plain characters'
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   const ui = await mountPane($, 'terminal', { columns: 80 })
   const text = linesOf(await ui.drawn()).join('\n')
-  // the status glyphs, the branch lines, the rules, the selection marker and the mainline separator
-  for (const glyph of ['✓', '✗', '◐', '○', '◌', '⊘', '├', '└', '│', '─', '❯', '█', '›']) expect(text).not.toContain(glyph)
+  // the status glyphs, the rules, the marks in the margin, the recording dot, the detail's marker and the mainline separator
+  for (const glyph of ['✓', '✗', '◐', '○', '◌', '⊘', '├', '└', '│', '─', '❯', '█', '›', '▎', '▌', '●', '▾', '▸']) expect(text).not.toContain(glyph)
   const lines = linesOf(await ui.drawn())
-  expect(lines.find(l => l.includes('连接只走池化'))).toMatch(/^ {2}\+ \+ /) // branch, then adopted
-  expect(lines.find(l => l.includes('seed 0 重跑'))).toMatch(/^ {2}\| \| ` x /) // two guides, the last branch, rejected
-  expect(lines.find(l => l.startsWith('>'))).toContain('design v2') // the selection marker
+  expect(lines.find(l => l.includes('连接只走池化'))).toMatch(/^\| {3}\+ /) // the mainline's spine, two columns in, adopted
+  expect(lines.find(l => l.includes('seed 0 重跑'))).toMatch(/^ {8}x /) // three levels down, rejected, nothing in the margin
+  expect(lines.find(l => l.startsWith('>'))).toContain('design v2') // the selection's mark
+  expect(text).toContain('* Recording') // the recording dot
 })
 
 test('a pane docked and a pane inline draw the same tree; inline stays short', async ($, on) => {
@@ -114,6 +116,114 @@ test('a pane docked and a pane inline draw the same tree; inline stays short', a
   expect(inlineLines.length).toBeLessThan(dockedLines.length)
 })
 
+// ---------------------------------------------------------------- the look
+
+test('the selected row is one bar: all of it on the selection colour from edge to edge, its mark in the accent, and no other row has a background', async ($, on) => {
+  const w = world(on)
+  seed(w, SKETCH)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const ui = await mountPane($, 'terminal', { columns: 80 })
+
+  const expectBarOn = async (id: string) => {
+    const tree = await ui.drawn()
+    for (const key of rowKeys(tree)) {
+      const runs = runsOf(elementOf(tree, key))
+      expect(runs.some(r => r.text === '')).toBe(false) // a piece of no columns draws nothing
+      if (key !== id) {
+        expect(runs.filter(r => r.backgroundColor !== undefined)).toEqual([])
+        continue
+      }
+      expect(runs.every(r => r.backgroundColor === 'subtle')).toBe(true)
+      expect(runs[0]).toEqual({ text: '▌', color: 'suggestion', backgroundColor: 'subtle' })
+      expect(runs.some(r => r.bold === true)).toBe(true) // the title
+      expect(strWidth(runs.map(r => r.text).join(''))).toBe(80) // the bar runs to the edge of the pane
+    }
+  }
+
+  await expectBarOn('design-v2')
+  await ui.press({ key: 'gateway' })
+  await expectBarOn('gateway')
+  await ui.press({ key: '~down' })
+  await expectBarOn('proxies1')
+})
+
+test('the mainline is a thin spine in the margin of its rows, and its label has the same colour; the rows off it leave the margin empty', async ($, on) => {
+  const w = world(on)
+  seed(w, SKETCH)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const ui = await mountPane($, 'terminal', { columns: 80 })
+  const tree = await ui.drawn()
+
+  for (const key of ['pooling-only-2', 'dbpool-adopted', 'v22-adopted', 'gateway']) {
+    expect(runsOf(elementOf(tree, key))[0]).toEqual({ text: '▎', color: 'merged' })
+  }
+  for (const key of ['pool-32', 'v21-abs-size', 'v21-run-a', 'deep-skip', 'proxies1']) {
+    expect(runsOf(elementOf(tree, key))[0]).toEqual({ text: ' ' })
+  }
+  // a selected row on the mainline gives the margin to its bar
+  expect(runsOf(elementOf(tree, 'design-v2'))[0]?.text).toBe('▌')
+
+  const mainline = blocksOf(tree).find(b => textOf(b).startsWith('  Mainline'))
+  expect(runsOf(mainline)[1]).toEqual({ text: 'Mainline', color: 'merged' })
+})
+
+test('a row has no tree lines, no dates and no status words: the glyph says what it is', async ($, on) => {
+  const w = world(on)
+  seed(w, SKETCH)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const ui = await mountPane($, 'terminal', { columns: 100 })
+  const tree = await ui.drawn()
+  for (const key of rowKeys(tree)) {
+    const line = textOf(elementOf(tree, key))
+    expect(line).not.toMatch(/[├└│─]/)
+    expect(line).not.toMatch(/\d{2}-\d{2}/)
+    expect(line).not.toMatch(/Adopted|Rejected|Planned|Withdrawn|In progress/)
+  }
+})
+
+test('the footer, the Allow button and the edit form start where the text does, two columns in', async ($, on) => {
+  const w = world(on)
+  seed(w, SKETCH, { statusArgv: ['bash', 'scripts/status.sh'] })
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  await slash($, 'tree')
+  const ui = await mountPane($, 'terminal', { columns: 80 })
+
+  let tree = await ui.drawn()
+  const footers = blocksOf(tree).filter((b): b is El => (b as El).type === 'Box' && (b as El).props?.flexDirection === 'row')
+  expect(footers.length).toBeGreaterThan(0)
+  for (const f of footers) expect(textOf(f.children?.[0])).toBe('  ')
+
+  const allow = blocksOf(tree).find(b => keysOf(b).includes('~allow')) as El | undefined
+  expect(allow?.type).toBe('Box')
+  expect(allow?.props?.paddingLeft).toBe(2)
+
+  await ui.press({ key: '~edit' })
+  tree = await ui.drawn()
+  const form = blocksOf(tree).find(b => keysOf(b).includes('~summary')) as El | undefined
+  expect(textOf(form?.children?.[0])).toBe('  Edit design-v2') // its title is a line of the pane
+  const fields = form?.children?.[1] as El | undefined
+  expect(fields?.props?.paddingLeft).toBe(2)
+  expect(keysOf(fields)).toEqual(['~status', '~summary', '~save', '~cancel'])
+})
+
+test('a docked pane keeps its footer on its last rows, an inline one is only as tall as it needs', async ($, on) => {
+  const w = world(on)
+  seed(w, SKETCH)
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const docked = await mountPane($, 'terminal', { columns: 80, rows: 36 })
+  const dockedTree = await docked.drawn()
+  await docked.unmount()
+  expect(linesOf(dockedTree)).toHaveLength(36)
+  const last = blocksOf(dockedTree).at(-1) as El | undefined
+  expect(last?.type).toBe('Box')
+  expect(last?.props?.flexDirection).toBe('row') // the footer
+  const inline = await mountPane($, 'terminal', { columns: 80, rows: 36, placement: 'inline' })
+  const inlineTree = await inline.drawn()
+  expect(linesOf(inlineTree).length).toBeLessThan(36)
+  expect(linesOf(inlineTree).length).toBeLessThanOrEqual(16)
+  expect((blocksOf(inlineTree).at(-1) as El | undefined)?.props?.flexDirection).toBe('row')
+})
+
 // ---------------------------------------------------------------- selecting and opening
 
 for (const surface of SURFACES) {
@@ -126,15 +236,15 @@ for (const surface of SURFACES) {
 
     await ui.press({ key: 'v22-adopted' })
     let lines = linesOf(await ui.drawn())
-    expect(lines.filter(l => l.startsWith('❯'))).toHaveLength(1)
-    expect(lines.find(l => l.startsWith('❯'))).toContain('构建版本定为 v2.2')
+    expect(lines.filter(l => l.startsWith('▌'))).toHaveLength(1)
+    expect(lines.find(l => l.startsWith('▌'))).toContain('构建版本定为 v2.2')
     expect(lines.join('\n')).toContain('池的大小、线程、队列全部用比例') // its detail
     expect(rowKeys(await ui.drawn())).toContain('deep-skip') // selecting did not close it
 
     await ui.press({ key: 'v22-adopted' })
     expect(rowKeys(await ui.drawn())).not.toContain('deep-skip')
     lines = linesOf(await ui.drawn())
-    expect(lines.find(l => l.startsWith('❯'))).toContain('+1') // the collapsed child, counted
+    expect(lines.find(l => l.startsWith('▌'))).toContain('+1') // the collapsed child, counted
 
     await ui.press({ key: 'v22-adopted' })
     expect(rowKeys(await ui.drawn())).toContain('deep-skip')
@@ -144,7 +254,7 @@ for (const surface of SURFACES) {
     await ui.press({ key: 'deep-skip' })
     await ui.press({ key: 'deep-skip' })
     expect(rowKeys(await ui.drawn())).toEqual(rowsBefore)
-    expect(linesOf(await ui.drawn()).find(l => l.startsWith('❯'))).toContain('deep_skip')
+    expect(linesOf(await ui.drawn()).find(l => l.startsWith('▌'))).toContain('deep_skip')
   })
 }
 
@@ -153,7 +263,7 @@ test('the focus ring follows the selection: Tab or an arrow onto a row selects i
   seed(w, SKETCH)
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   const ui = await mountPane($, 'terminal', { columns: 80 })
-  const marked = async () => linesOf(await ui.drawn()).find(l => l.startsWith('❯')) ?? ''
+  const marked = async () => linesOf(await ui.drawn()).find(l => l.startsWith('▌')) ?? ''
 
   await $.ui.focus({ component: 'Pane', requestId: 'decision-tree', plugin: 'decision-tree', element: 'gateway', origin: { kind: 'person' } })
   expect(await marked()).toContain('gateway')
@@ -175,7 +285,7 @@ test('the j and k keys step the selection, rows and all', async ($, on) => {
   const up = await ui.find({ key: '~up' })
   expect(down?.props.hotkey).toBe('j')
   expect(up?.props.hotkey).toBe('k')
-  const marked = async () => linesOf(await ui.drawn()).find(l => l.startsWith('❯')) ?? ''
+  const marked = async () => linesOf(await ui.drawn()).find(l => l.startsWith('▌')) ?? ''
 
   await ui.press({ key: '~down' })
   expect(await marked()).toContain('连接只走池化')
@@ -410,7 +520,7 @@ test('a tree longer than the pane is windowed around the selection, with page ro
   await ui.press({ key: '~page-down' })
   tree = await ui.drawn()
   expect(keysOf(tree)).toContain('~page-up')
-  const marked = linesOf(tree).find(l => l.startsWith('❯')) ?? ''
+  const marked = linesOf(tree).find(l => l.startsWith('▌')) ?? ''
   expect(marked).toContain('decision number') // the selection moved a page down, off the root
   expect(first).toBe('big-root')
   for (const line of linesOf(tree)) expect(strWidth(line)).toBeLessThanOrEqual(70)

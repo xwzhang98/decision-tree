@@ -107,8 +107,6 @@ export function resolveRef(idx: TreeIndex, ref: string): Resolved {
 export type Row = {
   node: DtNode
   depth: number
-  /** The guide characters before the glyph: `│ ├ `, `  └ `; empty for a root. */
-  prefix: string
   /** Children that pass the filter. */
   childCount: number
   /** Children not drawn because this node is collapsed. */
@@ -119,7 +117,6 @@ export type Row = {
 export type RowOptions = {
   ui: Pick<DtUi, 'expanded' | 'collapsed' | 'filter'>
   nowMs: number
-  ascii: boolean
 }
 
 const RECENT_MS = 48 * 3600 * 1000
@@ -164,11 +161,6 @@ function defaultExpanded(idx: TreeIndex, show: ReadonlySet<string>, nowMs: numbe
   return open
 }
 
-const GUIDES = {
-  unicode: { tee: '├ ', end: '└ ', bar: '│ ', blank: '  ' },
-  ascii: { tee: '+ ', end: '` ', bar: '| ', blank: '  ' },
-} as const
-
 /** Flattens the tree into the rows to draw, in order. */
 export function visibleRows(idx: TreeIndex, opts: RowOptions): Row[] {
   const { filter } = opts.ui
@@ -177,7 +169,6 @@ export function visibleRows(idx: TreeIndex, opts: RowOptions): Row[] {
   const open = defaultExpanded(idx, show, opts.nowMs)
   const userOpen = new Set(opts.ui.expanded)
   const userShut = new Set(opts.ui.collapsed)
-  const guides = opts.ascii ? GUIDES.ascii : GUIDES.unicode
   const rows: Row[] = []
 
   const isOpen = (id: string): boolean => {
@@ -187,25 +178,21 @@ export function visibleRows(idx: TreeIndex, opts: RowOptions): Row[] {
     return open.has(id)
   }
 
-  const walk = (parent: string | null, depth: number, trail: string): void => {
-    const kids = (idx.children.get(parent) ?? []).filter(k => show.has(k.id))
-    kids.forEach((node, i) => {
-      const isLast = i === kids.length - 1
-      const own = depth === 0 ? '' : isLast ? guides.end : guides.tee
+  const walk = (parent: string | null, depth: number): void => {
+    for (const node of (idx.children.get(parent) ?? []).filter(k => show.has(k.id))) {
       const sub = (idx.children.get(node.id) ?? []).filter(k => show.has(k.id))
       const expanded = sub.length > 0 && isOpen(node.id)
       rows.push({
         node,
         depth,
-        prefix: depth === 0 ? '' : trail + own,
         childCount: sub.length,
         hiddenKids: sub.length > 0 && !expanded ? sub.length : 0,
         isExpanded: expanded,
       })
-      if (expanded) walk(node.id, depth + 1, depth === 0 ? '' : trail + (isLast ? guides.blank : guides.bar))
-    })
+      if (expanded) walk(node.id, depth + 1)
+    }
   }
-  walk(null, 0, '')
+  walk(null, 0)
   return rows
 }
 

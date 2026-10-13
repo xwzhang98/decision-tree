@@ -45,3 +45,19 @@ export function isQuiet(status: DtStatus): boolean {
 export const RULE = { unicode: '─', ascii: '-' } as const
 export const BAR = { unicode: '█', ascii: '#' } as const
 export const MAINLINE_SEP = { unicode: ' › ', ascii: ' > ' } as const
+
+/** What the first column of a row can hold: the mainline's spine, the selection's bar, the recording dot. */
+export const MARKS = {
+  spine: { unicode: '▎', ascii: '|' },
+  bar: { unicode: '▌', ascii: '>' },
+  dot: { unicode: '●', ascii: '*' },
+} as const
+
+/** The theme colors the pane's structure uses (statuses have their own, above). */
+export const COLORS = {
+  /** The mainline: its spine in the margin and its label. */
+  mainline: 'merged',
+  /** The selected row: the bar's mark and the background behind the row. */
+  mark: 'suggestion',
+  selected: 'subtle',
+} as const

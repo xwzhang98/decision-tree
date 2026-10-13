@@ -9,6 +9,8 @@ export type Span = {
   text: string
   /** A theme key (`success`, `error`, `inactive`, ...) or a raw color. */
   color?: string
+  /** A theme key or a raw color behind the text: the selected row's bar. */
+  bg?: string
   dim?: boolean
   bold?: boolean
   inverse?: boolean
@@ -104,4 +106,12 @@ function oneSpace(s: string): string {
 /** Blank leading columns. */
 export function indent(n: number): Span {
   return { text: ' '.repeat(Math.max(0, n)) }
+}
+
+/** `line` with `bg` behind every span that has no background of its own, padded with blanks to `width` columns. */
+export function barLine(line: readonly Span[], bg: string, width: number): Line {
+  const out: Line = line.map(s => (s.bg === undefined ? { ...s, bg } : s))
+  const gap = width - lineWidth(out)
+  if (gap > 0) out.push({ text: ' '.repeat(gap), bg })
+  return out
 }

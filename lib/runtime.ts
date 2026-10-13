@@ -1070,10 +1070,9 @@ export class Runtime {
   // ---------------------------------------------------------------- what the pane shows
 
   private async view($: Dollar) {
-    const [model, ui, project] = await Promise.all([$.state.model.read(), $.state.ui.read(), $.state.project.read()])
+    const [model, ui] = await Promise.all([$.state.model.read(), $.state.ui.read()])
     const idx = buildIndex(model)
-    const ascii = project.config?.display.asciiGlyphs === true
-    const rows = visibleRows(idx, { ui, nowMs: this.nowMs, ascii })
+    const rows = visibleRows(idx, { ui, nowMs: this.nowMs })
     return { model, ui, idx, rows, sel: effectiveSelection(idx, rows, ui.selected) }
   }
 

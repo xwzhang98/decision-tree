@@ -1,16 +1,25 @@
 import { expect, test } from 'claude-code/testing'
 
 import { eventFileName } from '../lib/events'
+import { COLORS, MARKS } from '../lib/glyphs'
 import {
+  AIRIER_MIN_ROWS,
+  AIRY_DETAIL_ROWS,
+  AIRY_MIN_ROWS,
+  EDGE,
   EDIT_ROWS,
+  GUTTER,
   MAX_COMMAND_LINES,
   ORIGIN_MIN_ROWS,
+  STEP,
   blockWidth,
   capLines,
   detailLines,
   evidenceLine,
   footerItems,
   headerLine,
+  indentPlan,
+  innerWidth,
   itemWidth,
   laneLine,
   layoutPane,
@@ -19,6 +28,7 @@ import {
   originLine,
   packFooter,
   rowNote,
+  shortTitle,
   treeRowLine,
   type Block,
   type HeaderInput,
@@ -27,7 +37,7 @@ import {
   type PaneInput,
   type PaneLayout,
 } from '../lib/layout'
-import { fitSpans, lineText, lineWidth, ruleLine, sp, truncateSpans } from '../lib/spans'
+import { barLine, fitSpans, lineText, lineWidth, ruleLine, sp, truncateSpans } from '../lib/spans'
 import { describeArgv } from '../lib/status'
 import { buildIndex, trunkNodes, visibleRows } from '../lib/tree'
 import { drawable, isAltered, isHidden, strWidth } from '../lib/width'
@@ -35,7 +45,7 @@ import type { DtFork, DtLang, DtNode, DtUi } from '../types'
 import { NOW, NOW_DATA, NOW_NONE, NOW_PENDING, UI0, bigTree, iso, modelOf, node, nowApproved, projectOf, sampleNodes } from './fixture'
 
 const IDX = buildIndex(modelOf(sampleNodes()))
-const rowsFor = (ui: Partial<DtUi> = {}) => visibleRows(IDX, { ui: { ...UI0, ...ui }, nowMs: NOW, ascii: false })
+const rowsFor = (ui: Partial<DtUi> = {}) => visibleRows(IDX, { ui: { ...UI0, ...ui }, nowMs: NOW })
 const rowOf = (id: string, ui: Partial<DtUi> = {}) => rowsFor(ui).find(r => r.node.id === id)!
 
 function input(over: Partial<PaneInput> = {}): PaneInput {
@@ -111,21 +121,50 @@ test('spans: a rule is as wide as the pane, with the label near its right end', 
   expect(lineWidth(zh)).toBe(30)
 })
 
+test('spans: a bar puts its background behind every span and pads the line out to the width', () => {
+  const line = [sp('ab', { bold: true }), sp('中', { dim: true })]
+  const bar = barLine(line, 'subtle', 10)
+  expect(lineWidth(bar)).toBe(10)
+  expect(lineText(bar)).toBe('ab中' + ' '.repeat(6))
+  expect(bar.every(s => s.bg === 'subtle')).toBe(true)
+  // the styles are kept; the line given is not changed
+  expect(bar[0]!.bold).toBe(true)
+  expect(bar[1]!.dim).toBe(true)
+  expect(line.every(s => s.bg === undefined)).toBe(true)
+  // a span with a background of its own keeps it
+  expect(barLine([{ text: 'x', bg: 'error' }, sp('y')], 'subtle', 3).map(s => s.bg)).toEqual(['error', 'subtle', 'subtle'])
+  // already as wide as the bar, or wider: nothing is added, nothing cut
+  expect(lineText(barLine([sp('abcd')], 'subtle', 4))).toBe('abcd')
+  expect(lineText(barLine([sp('abcdef')], 'subtle', 4))).toBe('abcdef')
+})
+
 // ---------------------------------------------------------------- header, mainline
 
-test('header: title left, state and count and clock right, at any width', () => {
+test('header: the pane and the project on the left, the state, count and clock flush right', () => {
   const h = headerLine({ width: 68, lang: 'zh', title: 'orders-api-rewrite', mode: 'recording', count: 23, lastEventAt: '2026-10-10T00:12:00-04:00' })
   expect(lineWidth(h)).toBe(68)
   const text = lineText(h)
-  expect(text.startsWith('决策树 · orders-api-rewrite')).toBe(true)
-  expect(/记录中 · 23 个决定 · \d\d:\d\d 更新$/.test(text)).toBe(true)
+  expect(text.startsWith('决策树  orders-api-rewrite ')).toBe(true)
+  expect(/● 记录中 {3}23 个决定 {3}\d\d:\d\d 更新$/.test(text)).toBe(true)
+  // the project's name is the one thing in bold; the pane's own name and the details are quiet; the dot has the state's colour
+  expect(h.filter(s => s.bold === true).map(s => s.text)).toEqual(['orders-api-rewrite'])
+  expect(h.find(s => s.text === '决策树')!.dim).toBe(true)
+  expect(h.find(s => s.text === '●')!.color).toBe('success')
+  expect(h.find(s => s.text === ' 记录中')!.dim).toBe(true)
 
-  const en = lineText(headerLine({ width: 68, lang: 'en', title: 'orders-api-rewrite', mode: 'paused', count: 1, lastEventAt: null }))
-  expect(en.startsWith('Decision tree · orders-api-rewrite')).toBe(true)
-  expect(en.endsWith('Paused · 1 decision')).toBe(true)
+  // paused is said in the warning colour, the word too; a clock that is not known is left out
+  const paused = headerLine({ width: 68, lang: 'en', title: 'orders-api-rewrite', mode: 'paused', count: 1, lastEventAt: null })
+  expect(lineText(paused).startsWith('Decision tree  orders-api-rewrite ')).toBe(true)
+  expect(lineText(paused).endsWith('● Paused   1 decision')).toBe(true)
+  expect(paused.find(s => s.text === '●')!.color).toBe('warning')
+  expect(paused.find(s => s.text === ' Paused')!.color).toBe('warning')
+  // ASCII: the dot is an asterisk
+  expect(lineText(headerLine({ width: 60, lang: 'en', ascii: true, title: 'x', mode: 'recording', count: 2, lastEventAt: null }))).toMatch(/^Decision tree {2}x +\* Recording {3}2 decisions$/)
 
-  // off: the title only
-  expect(lineText(headerLine({ width: 40, lang: 'zh', title: 'x', mode: 'off', count: 0, lastEventAt: null }))).toBe('决策树 · x')
+  // not recording: the names only; and with no project name, the pane's own
+  expect(lineText(headerLine({ width: 40, lang: 'zh', title: 'x', mode: 'off', count: 0, lastEventAt: null }))).toBe('决策树  x')
+  expect(lineText(headerLine({ width: 40, lang: 'en', title: '', mode: 'off', count: 0, lastEventAt: null }))).toBe('Decision tree')
+  expect(lineText(headerLine({ width: 40, lang: 'en', title: '', mode: 'recording', count: 2, lastEventAt: null }))).toMatch(/^Decision tree {2,}● Recording {3}2 decisions$/)
   for (let w = 8; w <= 70; w++) {
     expect(lineWidth(headerLine({ width: w, lang: 'zh', title: 'a-rather-long-project-name', mode: 'recording', count: 123, lastEventAt: '2026-10-10T00:12:00-04:00' })) <= w).toBe(true)
   }
@@ -142,42 +181,51 @@ const head = (over: Partial<HeaderInput> = {}): HeaderInput => ({
   ...over,
 })
 
-test('header: a tree other than main is named after the title, and the project name gives way first', () => {
-  // room for everything: the tag follows the title, then the project name; state, count and clock are flush right
+test('header: a tree other than main is tagged after the name, and the name gives way before the tag and the state', () => {
+  // room for everything: the tag follows the name; the state, the count and the clock are flush right
   const wide = headerLine(head())
   expect(lineWidth(wide)).toBe(100)
-  expect(lineText(wide).startsWith('Decision tree [sql-v3] · orders-api-rewrite ')).toBe(true)
-  expect(/ {2}Recording · 23 decisions · updated \d\d:\d\d$/.test(lineText(wide))).toBe(true)
-  const tag = wide.find(s => s.text === ' [sql-v3]')!
+  expect(lineText(wide).startsWith('Decision tree  orders-api-rewrite  [sql-v3] ')).toBe(true)
+  expect(/ {2}● Recording {3}23 decisions {3}updated \d\d:\d\d$/.test(lineText(wide))).toBe(true)
+  const tag = wide.find(s => s.text === '[sql-v3]')!
   expect(tag.color).toBeDefined()
   expect(tag.dim).not.toBe(true)
   const zh = lineText(headerLine(head({ lang: 'zh' })))
-  expect(zh.startsWith('决策树 [sql-v3] · orders-api-rewrite ')).toBe(true)
-  expect(/记录中 · 23 个决定 · \d\d:\d\d 更新$/.test(zh)).toBe(true)
+  expect(zh.startsWith('决策树  orders-api-rewrite  [sql-v3] ')).toBe(true)
+  expect(/● 记录中 {3}23 个决定 {3}\d\d:\d\d 更新$/.test(zh)).toBe(true)
 
   // the main tree is not named, nor is a header given no tree; what is stored is drawn like everything else
   for (const tree of ['main', undefined]) {
-    expect(lineText(headerLine(head({ tree }))).startsWith('Decision tree · orders-api-rewrite ')).toBe(true)
+    const text = lineText(headerLine(head({ tree })))
+    expect(text.startsWith('Decision tree  orders-api-rewrite ')).toBe(true)
+    expect(text.includes('[')).toBe(false)
   }
-  expect(lineText(headerLine(head({ tree: 'sql\u200b-v3' }))).startsWith('Decision tree [sql-v3] · ')).toBe(true)
+  expect(lineText(headerLine(head({ tree: 'sql\u200b-v3' })))).toContain('  [sql-v3]  ')
 
-  // narrower, the project name is cut first, from its end ...
+  // narrower, the state gives up the clock, then the count, then its word, and the name stays whole ...
   const at = (width: number) => lineText(headerLine(head({ width })))
-  expect(at(85)).toContain(' · orders-api-rewrite  Recording')
-  expect(at(84)).toContain(' · orders-api-rewri…  Recording')
-  expect(at(80)).toContain(' · orders-api-r…  Recording')
-  // ... until at 68 columns none of it is left, and the tag is still whole
-  expect(/^Decision tree \[sql-v3\] · …  Recording · 23 decisions · updated \d\d:\d\d$/.test(at(68))).toBe(true)
+  expect(at(87)).toMatch(/23 decisions {3}updated \d\d:\d\d$/)
+  expect(at(86)).toMatch(/\[sql-v3\] +● Recording {3}23 decisions$/)
+  expect(at(71)).toMatch(/\[sql-v3\] +● Recording {3}23 decisions$/)
+  expect(at(70)).toMatch(/\[sql-v3\] +● Recording$/)
+  expect(at(56)).toMatch(/\[sql-v3\] +● Recording$/)
+  expect(at(55)).toMatch(/\[sql-v3\] +●$/)
+  expect(at(46)).toMatch(/orders-api-rewrite {2}\[sql-v3\] +●$/)
+  // ... until the name is cut from its end, then left out, and the tag is still whole
+  expect(at(45)).toContain('orders-api-rewri…  [sql-v3]  ●')
+  expect(at(40)).toContain('orders-api-…  [sql-v3]  ●')
+  expect(at(34)).toContain('order…  [sql-v3]')
+  expect(at(33)).not.toContain('order')
+  expect(at(33)).toMatch(/^Decision tree {2}\[sql-v3\] +●$/)
 
-  // at every width: the line fits, the name never outlives the tag, and the right side is not cut while it fits
+  // at every width: the line fits, the name never outlives the tag, and from 30 columns up the tag and the dot show
   for (const lang of ['en', 'zh'] as DtLang[]) {
-    const rightWidth = lang === 'en' ? 40 : 31
     for (let width = 16; width <= 120; width++) {
       const h = headerLine(head({ width, lang }))
       const text = lineText(h)
       expect(lineWidth(h) <= width).toBe(true)
-      if (text.includes('orders')) expect(text.includes(' [sql-v3] · ')).toBe(true)
-      if (width >= rightWidth) expect(/\d\d:\d\d( 更新)?$/.test(text)).toBe(true)
+      if (text.includes('orders')) expect(text.includes('[sql-v3]')).toBe(true)
+      if (width >= 30) expect(text.includes('[sql-v3]') && text.includes('●')).toBe(true)
     }
   }
 })
@@ -247,9 +295,44 @@ test('mainline: the newest items that fit, older ones become an ellipsis, a glyp
   for (let w = 6; w < 60; w++) expect(lineWidth(mainlineLine(trunk, { width: w, ascii: false, lang: 'zh' })!) <= w).toBe(true)
 })
 
+test('mainline: the label is violet, older steps are quiet and the newest is in full strength', () => {
+  const line = mainlineLine(trunkNodes(IDX), { width: 200, ascii: false, lang: 'zh' })!
+  expect(line[0]).toEqual({ text: '主线', color: COLORS.mainline })
+  const steps = line.filter(s => /design v2|连接只走池化|连接池采用|构建版本定为|2 hops/.test(s.text))
+  expect(steps.map(s => s.dim === true)).toEqual([true, true, true, true, false])
+  // a step that is not adopted carries its glyph in its own colour, after its title
+  expect(line.find(s => s.text === '◐')!.color).toBe('suggestion')
+  expect(line.filter(s => s.text === '✓')).toEqual([])
+  // the separators are quiet too
+  expect(line.filter(s => s.text === ' › ').every(s => s.dim === true)).toBe(true)
+})
+
+test('mainline: a title written as a sentence shows as its subject, and a long one is cut at a space', () => {
+  expect(shortTitle('v22: why the pool is relative, and how it is set')).toBe('v22: why the pool is relative')
+  expect(shortTitle('构建版本定为 v2.2：池的大小、线程、队列全部用比例')).toBe('构建版本定为 v2.2')
+  expect(shortTitle('PgBouncer: adopted')).toBe('PgBouncer')
+  expect(shortTitle('no break here')).toBe('no break here')
+  // a front shorter than the least is not a subject: it keeps the sentence
+  expect(shortTitle('v2: adopted')).toBe('v2: adopted')
+  expect(shortTitle('ab: cd', 2)).toBe('ab')
+  expect(shortTitle('(a) short title')).toBe('(a) short title')
+
+  const one = (title: string, width: number) => lineText(mainlineLine([node('m', null, { title, trunk: true })], { width, ascii: false, lang: 'en' })!)
+  // 24 columns for the newest of a 60-column pane: cut at the last space that keeps most of it, else in the word
+  expect(one('Queue moves to SQS with 4 workers', 60)).toBe('Mainline  Queue moves to SQS…')
+  expect(one('Queue moves to SQS: 4 workers and a dead-letter queue', 60)).toBe('Mainline  Queue moves to SQS')
+  expect(one('Supercalifragilisticexpialidocious', 60)).toBe('Mainline  Supercalifragilisticexp…')
+  // a cut never leaves a sign that joined the title to what was cut off
+  expect(one('Run PgBouncer + SQS-backed queue', 40)).toBe('Mainline  Run PgBouncer…')
+  expect(one('Use PgBouncer → SQS-backed queue', 40)).toBe('Mainline  Use PgBouncer…')
+  expect(one('Plan: PgBouncer / SQS-backed queue', 40)).toBe('Mainline  Plan: PgBouncer…')
+  // ... unless nothing else is left
+  expect(one('+ '.repeat(19), 40)).toBe(`Mainline  ${'+ '.repeat(10)}+…`)
+})
+
 // ---------------------------------------------------------------- rows
 
-test('rows: the sketch of spec 9.2, row by row', () => {
+test('rows: a glyph and a title indented by depth; the mainline has a spine, and nothing has a connector', () => {
   const rows = rowsFor()
   expect(rows.map(r => r.node.id)).toEqual([
     'design-v2',
@@ -264,49 +347,102 @@ test('rows: the sketch of spec 9.2, row by row', () => {
   ])
   const line = (id: string, selected = false) => lineText(treeRowLine(rowOf(id), { width: 68, selected, ascii: false, lang: 'zh' }))
 
-  const root = line('design-v2')
-  expect(root.startsWith('  ✓ design v2 定稿')).toBe(true)
-  expect(root.endsWith('10-08')).toBe(true)
-  expect(strWidth(root)).toBe(68)
+  // on the mainline: the spine in the first column, then the glyph, two columns in for each level
+  expect(line('design-v2')).toBe('▎ ✓ design v2 定稿')
+  expect(line('pooling-only-2')).toBe('▎   ✓ 连接只走池化（exp-2）')
+  expect(line('dbpool-adopted')).toBe('▎     ✓ 连接池采用')
+  expect(line('v22-adopted')).toBe('▎   ✓ 构建版本定为 v2.2')
+  expect(line('gateway')).toBe('▎   ◐ 2 hops 简化为 gateway')
+  // off it: nothing in the first column
+  expect(line('pool-32')).toBe('      = pool 数维持 32')
+  expect(line('deep-skip')).toBe('      ⊘ deep_skip 撤回')
+  expect(line('proxies1')).toBe('      ○ 3 proxies 换成一个 distributed cache')
+  // no connectors, dates or status words on a row
+  for (const r of rows) expect(/[├└│]|\d\d-\d\d|进行中|计划|提议/.test(lineText(treeRowLine(r, { width: 68, selected: false, ascii: false, lang: 'zh' })))).toBe(false)
+  // only the number of rows a folded one holds, flush right, one column short of the edge
+  const folded = line('v21-abs-size')
+  expect(folded.startsWith('      ✗ v2.1：池的大小用绝对值')).toBe(true)
+  expect(folded.endsWith('  +2')).toBe(true)
+  expect(strWidth(folded)).toBe(68 - EDGE)
 
-  expect(line('pooling-only-2').startsWith('  ├ ✓ 连接只走池化（exp-2）')).toBe(true)
-  expect(line('pooling-only-2').endsWith('10-09')).toBe(true)
-  expect(line('pool-32')).toBe('  │ ├ = pool 数维持 32')
-  expect(line('v21-abs-size').startsWith('  │ ├ ✗ v2.1：池的大小用绝对值')).toBe(true)
-  expect(line('v21-abs-size').endsWith('+2')).toBe(true)
-  expect(line('dbpool-adopted')).toBe('  │ └ ✓ 连接池采用')
-  expect(line('deep-skip')).toBe('  │ └ ⊘ deep_skip 撤回')
-  expect(line('gateway').startsWith('  └ ◐ 2 hops 简化为 gateway')).toBe(true)
-  expect(line('gateway').endsWith('进行中')).toBe(true)
-  expect(line('proxies1')).toBe('    └ ○ 3 proxies 换成一个 distributed cache')
-
-  // the selected row is marked in the gutter
-  expect(line('pool-32', true)).toBe('❯ │ ├ = pool 数维持 32')
-  expect(lineText(treeRowLine(rowOf('pool-32'), { width: 68, selected: true, ascii: true, lang: 'en' }))).toBe('> │ ├ = pool 数维持 32')
+  // the colours: the spine is the mainline's, the glyph the status's, a finished matter's title is quiet
+  const spine = treeRowLine(rowOf('gateway'), { width: 68, selected: false, ascii: false, lang: 'zh' })
+  expect(spine[0]).toEqual({ text: '▎', color: COLORS.mainline })
+  expect(spine.find(s => s.text === '◐')!.color).toBe('suggestion')
+  const rejected = treeRowLine(rowOf('v21-abs-size'), { width: 68, selected: false, ascii: false, lang: 'zh' })
+  expect(rejected.find(s => s.text === '✗')!.color).toBe('error')
+  expect(rejected.find(s => s.text.startsWith('v2.1'))!.dim).toBe(true)
+  expect(spine.find(s => s.text.startsWith('2 hops'))!.dim).not.toBe(true)
+  expect(spine.every(s => s.bg === undefined)).toBe(true)
 })
 
-test('rows: ASCII mode draws plain characters and English labels', () => {
-  const rows = visibleRows(IDX, { ui: UI0, nowMs: NOW, ascii: true })
+test('rows: the selected row is a bar from edge to edge: a mark, a background and a bold title', () => {
+  const sel = treeRowLine(rowOf('pool-32'), { width: 68, selected: true, ascii: false, lang: 'zh' })
+  expect(lineWidth(sel)).toBe(68)
+  expect(lineText(sel).trimEnd()).toBe('▌     = pool 数维持 32')
+  expect(sel[0]).toEqual({ text: '▌', color: COLORS.mark, bg: COLORS.selected })
+  expect(sel.every(s => s.bg === COLORS.selected)).toBe(true)
+  expect(sel.find(s => s.text === 'pool 数维持 32')!.bold).toBe(true)
+  // on the mainline the bar takes the place of the spine
+  expect(lineText(treeRowLine(rowOf('gateway'), { width: 68, selected: true, ascii: false, lang: 'zh' })).startsWith('▌   ◐ 2 hops')).toBe(true)
+  // a finished matter is not dim once it is selected, and the folded count stays at the edge, on the bar
+  const rejected = treeRowLine(rowOf('v21-abs-size'), { width: 68, selected: true, ascii: false, lang: 'zh' })
+  expect(rejected.find(s => s.text.startsWith('v2.1'))!.dim).not.toBe(true)
+  expect(rejected.find(s => s.text === '✗')!.dim).not.toBe(true)
+  expect(lineText(rejected).trimEnd().endsWith('  +2')).toBe(true)
+  expect(lineWidth(rejected)).toBe(68)
+  // ASCII: a plain mark
+  expect(lineText(treeRowLine(rowOf('pool-32'), { width: 68, selected: true, ascii: true, lang: 'en' })).trimEnd()).toBe('>     = pool 数维持 32')
+  expect(MARKS.bar.unicode).toBe('▌')
+})
+
+test('rows: ASCII mode draws plain characters', () => {
+  const rows = visibleRows(IDX, { ui: UI0, nowMs: NOW })
   const lines = rows.map(r => lineText(treeRowLine(r, { width: 60, selected: false, ascii: true, lang: 'en' })))
-  expect(lines.some(l => /[✓✗◐○⊘‖◌├└│]/.test(l))).toBe(false)
-  expect(lines[0]!.startsWith('  + design v2 定稿')).toBe(true)
-  const hop = lines.find(l => l.includes('2 hops'))!
-  expect(hop.includes('~ 2 hops')).toBe(true)
-  expect(hop.endsWith('In progress')).toBe(true)
+  expect(lines.some(l => /[✓✗◐○⊘‖◌▎▌├└│]/.test(l))).toBe(false)
+  expect(lines[0]).toBe('| + design v2 定稿')
+  expect(lines.find(l => l.includes('2 hops'))).toBe('|   ~ 2 hops 简化为 gateway')
+  expect(lines.find(l => l.includes('v2.1'))!.startsWith('      x v2.1')).toBe(true)
+  expect(lines.find(l => l.includes('deep_skip'))).toBe('      / deep_skip 撤回')
 })
 
-test('rows: notes are the collapsed count, then a label for open work or a date', () => {
+test('rows: indentation is two columns a level, one when the tree is too deep for that, and the title keeps its room', () => {
+  expect(STEP).toBe(2)
+  const chain = Array.from({ length: 30 }, (_, k) => node(`c${k}`, k === 0 ? null : `c${k - 1}`, { title: `step ${k}`, trunk: true }))
+  const rows = visibleRows(buildIndex(modelOf(chain)), { ui: { ...UI0, filter: 'all' }, nowMs: NOW })
+  expect(rows.map(r => r.depth)).toEqual(Array.from({ length: 30 }, (_, k) => k))
+  const plan = (width: number, from = rows) => indentPlan(from, width)
+  // 30 levels need 58 columns at two a level
+  expect(plan(100).step).toBe(2)
+  expect(plan(40).step).toBe(1)
+  expect(plan(100).cap).toBeGreaterThanOrEqual(58)
+  // a shallow tree is two columns a level in any pane wide enough for the title
+  expect(plan(40, rows.slice(0, 6)).step).toBe(2)
+  expect(indentPlan([], 40)).toEqual({ step: 2, cap: plan(40).cap })
+  // the deepest row of a narrow pane still shows its title, and every row fits
+  for (const width of [30, 40, 50, 70]) {
+    const p = indentPlan(rows, width)
+    const last = lineText(treeRowLine(rows[29]!, { width, selected: false, ascii: false, lang: 'en', step: p.step, cap: p.cap }))
+    expect(last).toContain('step 29')
+    for (const r of rows) expect(lineWidth(treeRowLine(r, { width, selected: false, ascii: false, lang: 'en', step: p.step, cap: p.cap })) <= width).toBe(true)
+  }
+  // without a plan the row is indented two columns a level, as deep as it goes
+  expect(lineText(treeRowLine(rows[3]!, { width: 80, selected: false, ascii: false, lang: 'en' }))).toBe('▎       ✓ step 3')
+})
+
+test('rows: the end of a row says how many rows are folded in it, and that it was retracted, and nothing else', () => {
   expect(rowNote(rowOf('v21-abs-size'), 'zh')).toBe('+2')
-  expect(rowNote(rowOf('gateway'), 'zh')).toBe('进行中')
-  expect(rowNote(rowOf('gateway'), 'en')).toBe('In progress')
-  expect(rowNote(rowOf('proxies1'), 'zh')).toBe('')
-  expect(rowNote(rowOf('dbpool-adopted'), 'zh')).toBe('')
-  expect(/^\d\d-\d\d$/.test(rowNote(rowOf('v22-adopted'), 'zh'))).toBe(true)
+  // what a node is, is for its glyph and its detail to say: no status word, no date
+  for (const id of ['gateway', 'proxies1', 'dbpool-adopted', 'v22-adopted', 'design-v2']) expect(rowNote(rowOf(id), 'zh')).toBe('')
   // retracted nodes (visible under "all") say so
   const nodes = sampleNodes().map(n => (n.id === 'pool-32' ? { ...n, retracted: { ts: iso(NOW), actor: 'user' as const, reason: 'oops' } } : n))
   const idx = buildIndex(modelOf(nodes))
-  const rows = visibleRows(idx, { ui: { ...UI0, filter: 'all' }, nowMs: NOW, ascii: false })
+  const rows = visibleRows(idx, { ui: { ...UI0, filter: 'all' }, nowMs: NOW })
   expect(rowNote(rows.find(r => r.node.id === 'pool-32')!, 'zh')).toBe('已撤销')
+  expect(rowNote(rows.find(r => r.node.id === 'pool-32')!, 'en')).toBe('Retracted')
+  // both, when a retracted node also holds folded rows
+  const holder = rowOf('v21-abs-size')
+  expect(rowNote({ ...holder, node: { ...holder.node, retracted: { ts: iso(NOW), actor: 'user' as const } } }, 'zh')).toBe('+2 已撤销')
 })
 
 test('rows: every width, selected or not, in either language, stays inside the pane', () => {
@@ -324,21 +460,37 @@ test('rows: every width, selected or not, in either language, stays inside the p
 
 // ---------------------------------------------------------------- detail
 
-test('detail: title with status, summary, evidence, sources - as in the sketch', () => {
+test('detail: title, then the status line, the summary and the labelled parts in a column', () => {
   const n = IDX.byId.get('v22-adopted')!
-  const lines = detailLines({ node: n, idx: IDX, width: 68, ascii: false, lang: 'zh', open: true }).map(lineText)
+  const spans = detailLines({ node: n, idx: IDX, width: 67, ascii: false, lang: 'zh', open: true })
+  const lines = spans.map(lineText)
   expect(lines.length).toBe(6)
-  expect(lines[0]!.startsWith('▾ 构建版本定为 v2.2')).toBe(true)
-  expect(/✓ 采用 · user · \d\d-\d\d$/.test(lines[0]!)).toBe(true)
-  expect(strWidth(lines[0]!)).toBe(68)
-  expect(lines[1]).toBe('  池的大小、线程、队列全部用比例，加 GC 比例。')
-  expect(lines[2]).toBe('  依据')
-  expect(lines[3]).toBe('    v22 s0 预热后  P99 suite 内 −12.6% [−15.1, −10.4]  v22_s0')
-  expect(lines[4]).toBe('    v22 s1 预热后  P99 suite 内 −13.5% [−15.7, −11.5]  v22_s1')
-  expect(lines[5]).toBe('  来源  reports/design_v22_20261009/SPEC_V22.md')
+  expect(lines[0]).toBe('▾ 构建版本定为 v2.2')
+  expect(lines[1]).toMatch(/^ {2}✓ 采用 {3}user {3}\d\d-\d\d$/)
+  expect(lines.slice(2)).toEqual([
+    '  池的大小、线程、队列全部用比例，加 GC 比例。',
+    '  依据  v22 s0 预热后  P99 suite 内 −12.6% [−15.1, −10.4]  v22_s0',
+    '        v22 s1 预热后  P99 suite 内 −13.5% [−15.7, −11.5]  v22_s1',
+    '  来源  reports/design_v22_20261009/SPEC_V22.md',
+  ])
+  // the title is the one bold text; the status has its colour; who and when are quiet; so are the labels and the runs
+  expect(spans.flat().filter(s => s.bold === true).map(s => s.text)).toEqual(['构建版本定为 v2.2'])
+  expect(spans[1]![1]!.color).toBe('success')
+  expect(spans[1]!.slice(2).every(s => s.dim === true)).toBe(true)
+  expect(spans[3]!.find(s => s.text.startsWith('依据'))!.dim).toBe(true)
+  expect(spans[3]!.find(s => s.text === 'v22_s0')!.dim).toBe(true)
+  expect(spans[3]!.find(s => s.text.startsWith('P99'))!.dim).not.toBe(true)
+
+  // the marker says whether the children are drawn: open, folded, or (a leaf) neither
+  const marker = (open: boolean | null, ascii = false) => lineText(detailLines({ node: n, idx: IDX, width: 67, ascii, lang: 'en', open })[0]!).slice(0, 2)
+  expect(marker(true)).toBe('▾ ')
+  expect(marker(false)).toBe('▸ ')
+  expect(marker(null)).toBe('▾ ')
+  expect(marker(true, true)).toBe('v ')
+  expect(marker(false, true)).toBe('> ')
 })
 
-test('detail: rationale wraps, supersession and notes show, a retracted node says so', () => {
+test('detail: rationale wraps beside its label, supersession and notes show, a retracted node says so', () => {
   const base = IDX.byId.get('pool-32')!
   const n = {
     ...base,
@@ -352,15 +504,52 @@ test('detail: rationale wraps, supersession and notes show, a retracted node say
   const idx = buildIndex(modelOf([...sampleNodes().filter(x => x.id !== 'pool-32'), n]))
   const lines = detailLines({ node: n, idx, width: 40, ascii: false, lang: 'en', open: null }).map(lineText)
   for (const l of lines) expect(strWidth(l) <= 40).toBe(true)
-  expect(lines.some(l => l.includes('Retracted by user: duplicate'))).toBe(true)
-  expect(lines.some(l => l.trim() === 'Rationale')).toBe(true)
-  expect(lines.some(l => l.includes('Superseded by v22-adopted'))).toBe(true)
-  expect(lines.some(l => l.includes('Tags  capacity, v2'))).toBe(true)
-  expect(lines.some(l => l.trim() === 'Notes')).toBe(true)
-  expect(lines.some(l => l.includes('user  checked again'))).toBe(true)
+  expect(lines[0]).toBe('▾ pool 数维持 32')
+  expect(lines[1]).toMatch(/^ {2}⊘ Superseded {3}model {3}\d\d-\d\d$/)
+  // the text of each part starts in the same column, under the one before it
+  expect(lines.slice(2, 9)).toEqual([
+    '  Retracted by user: duplicate',
+    '  Rationale  A long reason that has to',
+    '             wrap over more than one',
+    '             line of a narrow pane, with',
+    '             中文 mixed in.',
+    '  Superseded by v22-adopted',
+    '  Tags       capacity, v2',
+  ])
+  expect(lines[9]).toMatch(/^ {2}Notes {6}\d\d-\d\d user {2}checked again$/)
+  // the lines of a note hang under its text
+  expect(lines.slice(10)).toEqual([`${' '.repeat(25)}after the`, `${' '.repeat(25)}second seed`, `${' '.repeat(25)}finished`])
+  // the retraction is in the error colour
+  expect(detailLines({ node: n, idx, width: 40, ascii: false, lang: 'en', open: null })[2]!.every(s => s.text === '' || s.text.trim() === '' || s.color === 'error')).toBe(true)
   // another node names this one as what replaced it
-  const older = detailLines({ node: idx.byId.get('v22-adopted')!, idx, width: 68, ascii: false, lang: 'en', open: true }).map(lineText)
-  expect(older.some(l => l.includes('Supersedes pool-32'))).toBe(true)
+  const older = detailLines({ node: idx.byId.get('v22-adopted')!, idx, width: 67, ascii: false, lang: 'en', open: true }).map(lineText)
+  expect(older).toContain('  Supersedes pool-32')
+  expect(older).toContain('  Evidence  v22 s0 预热后  P99 suite 内 −12.6% [−15.1, −10.4]')
+  expect(older).toContain('  Sources   reports/design_v22_20261009/SPEC_V22.md')
+})
+
+test('detail: a pane too narrow for the label column puts each label above its text', () => {
+  const lines = detailLines({ node: IDX.byId.get('v22-adopted')!, idx: IDX, width: 30, ascii: false, lang: 'en', open: true }).map(lineText)
+  for (const l of lines) expect(strWidth(l) <= 30).toBe(true)
+  expect(lines).toContain('  Evidence')
+  expect(lines).toContain('  Sources')
+  // the text sits under its label, two columns further in, and still breaks where it must
+  const at = lines.indexOf('  Sources')
+  expect(lines[at + 1]!.startsWith('    reports/design_v22_')).toBe(true)
+  expect(lines.slice(at + 1).every(l => l.startsWith('    '))).toBe(true)
+})
+
+test('detail: blank rows between the parts when the pane has the room, and none for a part that is not there', () => {
+  const n = IDX.byId.get('v22-adopted')!
+  const tight = detailLines({ node: n, idx: IDX, width: 67, ascii: false, lang: 'zh', open: true }).map(lineText)
+  const roomy = detailLines({ node: n, idx: IDX, width: 67, ascii: false, lang: 'zh', open: true, roomy: true }).map(lineText)
+  // after the status line, and after the summary
+  expect(roomy).toEqual([tight[0]!, tight[1]!, '', tight[2]!, '', ...tight.slice(3)])
+  // a node with nothing but a title and a status has no blank row to add, nor has one with a summary only
+  const bare = node('bare', null, { title: 'Only a title', summary: undefined })
+  expect(detailLines({ node: bare, idx: IDX, width: 67, ascii: false, lang: 'en', open: null, roomy: true }).map(lineText).filter(l => l === '')).toEqual([])
+  const summed = node('summed', null, { title: 'Only a title', summary: 'and a summary' })
+  expect(detailLines({ node: summed, idx: IDX, width: 67, ascii: false, lang: 'en', open: null, roomy: true }).map(lineText).filter(l => l === '')).toHaveLength(1)
 })
 
 test('detail: a long title takes its own lines and the status goes under it', () => {
@@ -392,6 +581,24 @@ test('evidence lines give up the run first, then the label, and the value last',
   for (let w = 6; w < 90; w++) expect(strWidth(at(w)) <= w).toBe(true)
   // only a note
   expect(lineText(evidenceLine({ label: 'smoke test', note: 'passed' }, 40, 4))).toBe('    smoke test  passed')
+})
+
+test('evidence lines: labels padded to one column line the values up, and a run shows only when enough of it can', () => {
+  const a = { label: 'short', value: '1.5', run: 'run-a' }
+  const b = { label: 'a longer label', value: '2.5 ms', ci: '[1, 3]' }
+  expect(lineText(evidenceLine(a, 60, 4, 14))).toBe(`    ${'short'.padEnd(14)}  1.5  run-a`)
+  expect(lineText(evidenceLine(b, 60, 4, 14))).toBe('    a longer label  2.5 ms [1, 3]')
+  // no padding when the value would no longer fit beside the padded label: the line keeps its own label
+  expect(lineText(evidenceLine(a, 14, 4, 14))).toBe('    short  1.5')
+  // the padding goes before the run does: the value stays under the others', and the run is what gives way
+  expect(lineText(evidenceLine(a, 4 + 14 + 2 + 3 + 2 + 2, 4, 14))).toBe(`    ${'short'.padEnd(14)}  1.5`)
+  // a run cut to fewer than 6 columns says nothing, so it is left out; from 6 columns it is cut with an ellipsis
+  const r = { label: 'x', value: 'v', run: 'bench_20261009_long' }
+  expect(lineText(evidenceLine(r, 15, 4))).toBe('    x  v')
+  expect(lineText(evidenceLine(r, 16, 4))).toBe('    x  v  bench…')
+  expect(lineText(evidenceLine(r, 40, 4))).toBe('    x  v  bench_20261009_long')
+  // a run that fits whole is shown however short it is
+  expect(lineText(evidenceLine({ label: 'x', value: 'v', run: 's0' }, 12, 4))).toBe('    x  v  s0')
 })
 
 test('capLines marks what was cut', () => {
@@ -488,6 +695,9 @@ const pendingBlock = (argv: string[], over: Partial<NowInput> = {}): NowBlock =>
 
 /** The lines that spell the command out: the ones indented four columns, as nothing else in the block is. */
 const commandOf = (block: NowBlock): string[] => block.lines.map(lineText).filter(l => /^ {4}\S/.test(l))
+
+/** A line of the command in the whole pane: the block's four columns, and the gutter before them. */
+const COMMAND = new RegExp(`^ {${GUTTER + 4}}\\S`)
 
 /** A word of 30 columns: two fit on a line of a 68-column pane, three do not. */
 const word = (i: number): string => `w${String(i).padStart(2, '0')}`.padEnd(30, 'x')
@@ -586,7 +796,7 @@ test('pane: the Allow button carries the command that was drawn above it', () =>
     expect(allow.label).toBe(lang === 'zh' ? '允许运行' : 'Allow')
     const command = textOf(layout)
       .slice(0, at)
-      .filter(l => /^ {4}\S/.test(l))
+      .filter(l => COMMAND.test(l))
       .map(l => l.trim())
       .join(' ')
     expect(command).toBe(`bash -c 'scripts/status.sh --since "10 minutes ago"' 'tail<U+200B>'`)
@@ -597,7 +807,7 @@ test('pane: the Allow button carries the command that was drawn above it', () =>
   const other = ['bash', 'scripts/other.sh']
   const again = layoutPane(input({ now: { ...NOW_PENDING, argv: other }, statusInterval: 30 }))
   expect(allowOf(again)!.argv).toEqual(other)
-  expect(textOf(again)).toContain('    bash scripts/other.sh')
+  expect(textOf(again)).toContain('      bash scripts/other.sh')
   // no button for a command that is already allowed, or for one that is not drawn
   expect(allowOf(layoutPane(input({ now: nowApproved(), statusInterval: 30 })))).toBeUndefined()
   expect(allowOf(layoutPane(input({ now: NOW_PENDING, statusInterval: 30, ui: { ...UI0, showNow: false } })))).toBeUndefined()
@@ -612,7 +822,7 @@ test('pane: a command waiting for approval outranks the detail; with no room for
     checkLayout(layout, i, `${rows} rows`)
     expect(layout.height).toBeLessThanOrEqual(rows)
     const t = textOf(layout)
-    return { t, button: allowOf(layout) !== undefined, command: t.includes('    bash scripts/decision_status.sh'), detail: t.some(l => l.startsWith(detail)) }
+    return { t, button: allowOf(layout) !== undefined, command: t.includes('      bash scripts/decision_status.sh'), detail: t.some(l => l.startsWith(detail)) }
   }
   // room for everything: the command, its button and the detail of the selected node
   expect(asked(40)).toMatchObject({ button: true, command: true, detail: true })
@@ -621,33 +831,33 @@ test('pane: a command waiting for approval outranks the detail; with no room for
   // (with no command waiting, those rows do have room for the detail)
   expect(textOf(layoutPane(input({ rows: 19, ui }))).some(l => l.startsWith(detail))).toBe(true)
   // no room for the command whole: no button, no part of the command, and the pane says why
-  const cramped = asked(15)
+  const cramped = asked(12)
   expect(cramped).toMatchObject({ button: false, command: false, detail: false })
   // (one whole line under the label, not a sentence cut off where the room ran out)
-  expect(cramped.t).toContain('现在  有一条状态命令在等你确认；把 pane 拉大后才看得全。')
-  const en = textOf(layoutPane(input({ rows: 15, lang: 'en', ui, now: NOW_PENDING, statusInterval: 30 })))
-  expect(en).toContain('Now  A status command awaits your OK; enlarge the pane to read it.')
+  expect(cramped.t).toContain('  现在  有一条状态命令在等你确认；把 pane 拉大后才看得全。')
+  const en = textOf(layoutPane(input({ rows: 12, width: 72, lang: 'en', ui, now: NOW_PENDING, statusInterval: 30 })))
+  expect(en).toContain('  Now  A status command awaits your OK; enlarge the pane to read it.')
   expect(en.some(l => l.includes('bash scripts'))).toBe(false)
   // a narrow pane cuts that line with an ellipsis, it does not wrap it
-  const narrow = textOf(layoutPane(input({ rows: 15, width: 30, lang: 'en', ui, now: NOW_PENDING, statusInterval: 30 })))
-  expect(narrow.filter(l => l.startsWith('Now  A status command'))).toHaveLength(1)
-  expect(narrow.find(l => l.startsWith('Now  A status command'))!.endsWith('…')).toBe(true)
-  // the notice is the last thing to go: from 10 rows up the pane shows the whole command with its button, or the notice, never half of one ...
-  for (let rows = 10; rows <= 40; rows++) {
+  const narrow = textOf(layoutPane(input({ rows: 12, width: 30, lang: 'en', ui, now: NOW_PENDING, statusInterval: 30 })))
+  expect(narrow.filter(l => l.startsWith('  Now  A status command'))).toHaveLength(1)
+  expect(narrow.find(l => l.startsWith('  Now  A status command'))!.endsWith('…')).toBe(true)
+  // the notice is the last thing to go: from 8 rows up the pane shows the whole command with its button, or the notice, never half of one ...
+  for (let rows = 8; rows <= 40; rows++) {
     const c = asked(rows)
-    const notice = c.t.some(l => l.startsWith('现在  有一条状态命令在等你确认'))
+    const notice = c.t.some(l => l.startsWith('  现在  有一条状态命令在等你确认'))
     expect(notice, `${rows} rows`).toBe(!c.button)
     expect(c.command, `${rows} rows`).toBe(c.button)
   }
-  // (a command of one line has its button from 17 rows)
-  expect(asked(16).button).toBe(false)
-  expect(asked(17).button).toBe(true)
-  // ... and below 10 rows the pane draws only what fits, without a button
-  for (let rows = 7; rows <= 9; rows++) expect(asked(rows)).toMatchObject({ button: false, command: false })
-  // (a pane has 7 rows at the least: the header, the mainline, one row of the tree and the footer between their rules; a smaller screen clips it)
-  for (let rows = 3; rows <= 6; rows++) {
+  // (a command of one line has its button from 15 rows)
+  expect(asked(14).button).toBe(false)
+  expect(asked(15).button).toBe(true)
+  // ... and below 8 rows the pane draws only what fits, without a button
+  for (let rows = 6; rows <= 7; rows++) expect(asked(rows)).toMatchObject({ button: false, command: false })
+  // (a pane has 5 rows at the least: the header, the mainline, one row of the tree, and the footer under its rule; a smaller screen clips it)
+  for (let rows = 3; rows <= 5; rows++) {
     const layout = layoutPane(input({ rows, ui, now: NOW_PENDING, statusInterval: 30 }))
-    expect(layout.height, `${rows} rows`).toBe(7)
+    expect(layout.height, `${rows} rows`).toBe(5)
     expect(allowOf(layout), `${rows} rows`).toBeUndefined()
     expect(textOf(layout).some(l => l.includes('bash scripts')), `${rows} rows`).toBe(false)
   }
@@ -656,11 +866,11 @@ test('pane: a command waiting for approval outranks the detail; with no room for
   const long = { ...NOW_PENDING, argv: words(12) }
   const roomy = layoutPane(input({ rows: 40, ui, now: long, statusInterval: 30 }))
   expect(allowOf(roomy)!.argv).toEqual(long.argv)
-  expect(textOf(roomy).filter(l => /^ {4}w\d\d/.test(l))).toHaveLength(MAX_COMMAND_LINES)
-  const short = textOf(layoutPane(input({ rows: 20, ui, now: long, statusInterval: 30 })))
+  expect(textOf(roomy).filter(l => new RegExp(`^ {${GUTTER + 4}}w\\d\\d`).test(l))).toHaveLength(MAX_COMMAND_LINES)
+  const short = textOf(layoutPane(input({ rows: 17, ui, now: long, statusInterval: 30 })))
   expect(short.some(l => l.includes('w01'))).toBe(false)
   expect(short.some(l => l.includes('拉大'))).toBe(true)
-  expect(allowOf(layoutPane(input({ rows: 20, ui, now: long, statusInterval: 30 })))).toBeUndefined()
+  expect(allowOf(layoutPane(input({ rows: 17, ui, now: long, statusInterval: 30 })))).toBeUndefined()
 
   // whatever the size and the command: a button always has the whole command drawn above it
   for (const argv of [NOW_PENDING.argv, words(12), ['sh', '-c', `echo "a b"; echo ${'x'.repeat(50)}`]]) {
@@ -673,7 +883,7 @@ test('pane: a command waiting for approval outranks the detail; with no room for
           if (at < 0) continue
           const drawn = textOf(layout)
             .slice(0, at)
-            .filter(l => /^ {4}\S/.test(l))
+            .filter(l => COMMAND.test(l))
             .join('')
             .replace(/\s+/g, '')
           if (drawn !== spelled) throw new Error(`${lang} ${width}x${rows}: a button with ${JSON.stringify(drawn)} above it, not ${JSON.stringify(spelled)}`)
@@ -728,31 +938,105 @@ function checkLayout(layout: PaneLayout, i: PaneInput, label: string): void {
   if (layout.selected !== null && i.project.mode !== 'off' && !layout.drawn.includes(layout.selected)) throw new Error(`${label}: the selection ${layout.selected} is not drawn`)
 }
 
-test('pane: the sketch of spec 9.2 at 68 columns', () => {
+test('pane: the sketch at 68 columns: header, mainline, now, the tree, the detail and the footer', () => {
   const i = input({ rows: 40, now: nowApproved(), statusInterval: 30, ui: { ...UI0, selected: 'v22-adopted' } })
   const layout = layoutPane(i)
   const t = textOf(layout)
   checkLayout(layout, i, 'sketch')
-  expect(t[0]!.startsWith('决策树 · orders-api-rewrite')).toBe(true)
-  expect(t[1]).toBe('─'.repeat(68))
-  expect(t[2]).toBe('现在')
-  expect(t.filter(x => x.startsWith('  ZETA') || x.startsWith('  BETA')).length).toBe(3)
-  const mainAt = t.findIndex(x => x.startsWith('主线'))
-  expect(mainAt).toBeGreaterThan(2)
-  expect(t[mainAt - 1]).toBe('─'.repeat(68))
-  expect(t[mainAt + 1]).toBe('─'.repeat(68))
+  const rule = '  ' + '─'.repeat(68 - GUTTER - EDGE - 0)
+  expect(innerWidth(68)).toBe(65)
+  expect(rule).toHaveLength(67)
+  // the header, then a blank row, then the mainline, with the rule between them and the rest only where something follows
+  expect(t[0]!.startsWith('  决策树  orders-api-rewrite')).toBe(true)
+  expect(t[1]).toBe('')
+  expect(t[2]!.startsWith('  主线  ')).toBe(true)
+  expect(t[3]).toBe(rule)
+  expect(t[4]).toBe('  现在')
+  expect(t.filter(x => x.startsWith('    ZETA') || x.startsWith('    BETA')).length).toBe(3)
+  // the tree follows the now block after a blank row, with no rule of its own
+  const firstRow = t.findIndex(x => x.startsWith('▎ ✓ design v2'))
+  expect(firstRow).toBeGreaterThan(4)
+  expect(t[firstRow - 1]).toBe('')
+  expect(t.filter(x => x === rule)).toHaveLength(3)
   // nine tree rows, the selected one marked
   const rows = layout.blocks.filter((b): b is Extract<Block, { kind: 'row' }> => b.kind === 'row')
   expect(rows.map(r => r.id)).toEqual(['design-v2', 'pooling-only-2', 'pool-32', 'v21-abs-size', 'dbpool-adopted', 'v22-adopted', 'deep-skip', 'gateway', 'proxies1'])
   expect(rows.filter(r => r.selected).map(r => r.id)).toEqual(['v22-adopted'])
-  expect(lineText(rows.find(r => r.selected)!.line).startsWith('❯ ├ ✓ 构建版本定为 v2.2')).toBe(true)
-  // the detail follows, then the footer
+  expect(lineText(rows.find(r => r.selected)!.line).startsWith('▌   ✓ 构建版本定为 v2.2')).toBe(true)
+  // the rows have the width of the pane less the free edge; the selected one is the bar, a column wider
+  expect(rows.filter(r => !r.selected).every(r => lineWidth(r.line) <= 68 - EDGE)).toBe(true)
+  expect(lineWidth(rows.find(r => r.selected)!.line)).toBe(68)
+  // the detail follows under a rule, then the footer under another
   const detailAt = t.findIndex(x => x.startsWith('▾ 构建版本定为 v2.2'))
-  expect(detailAt).toBeGreaterThan(mainAt)
-  expect(t[detailAt - 1]).toBe('─'.repeat(68))
+  expect(detailAt).toBeGreaterThan(firstRow)
+  expect(t[detailAt - 1]).toBe(rule)
   expect(layout.blocks[layout.blocks.length - 1]!.kind).toBe('footer')
   expect(layout.blocks[layout.blocks.length - 2]!.kind === 'footer' || layout.blocks[layout.blocks.length - 2]!.kind === 'rule').toBe(true)
   expect(layout.height).toBeLessThanOrEqual(40)
+})
+
+test('pane: blank rows set the parts apart from 20 rows up, more of them from 28, and never cost the tree its rows', () => {
+  expect(AIRY_MIN_ROWS).toBe(20)
+  expect(AIRIER_MIN_ROWS).toBe(28)
+  const blanksAbove = (rows: number, over: Partial<PaneInput> = {}) => {
+    const layout = layoutPane(input({ rows, ...over }))
+    const t = textOf(layout)
+    const firstRow = layout.blocks.findIndex(b => b.kind === 'row')
+    return { head: t.slice(0, firstRow), t, layout }
+  }
+  // cramped: header, mainline, the tree
+  expect(blanksAbove(19).head.map(x => x === '')).toEqual([false, false])
+  // from 20: a blank row between the mainline and the tree
+  expect(blanksAbove(20).head.map(x => x === '')).toEqual([false, false, true])
+  // from 28: another between the header and the mainline
+  expect(blanksAbove(27).head.map(x => x === '')).toEqual([false, false, true])
+  expect(blanksAbove(28).head.map(x => x === '')).toEqual([false, true, false, true])
+  // a filter takes the blank row for its name, whatever the height
+  for (const rows of [10, 19, 20, 40]) {
+    const { head } = blanksAbove(rows, { ui: { ...UI0, filter: 'pending' } })
+    expect(head[head.length - 1]).toBe('  只看待定')
+  }
+  // the blank rows are what the tree can spare: it never has fewer rows than it would without them, when it has them to show
+  for (let rows = 8; rows <= 40; rows++) {
+    const layout = layoutPane(input({ rows }))
+    expect(layout.height).toBeLessThanOrEqual(rows)
+  }
+  expect(blanksAbove(40).layout.drawn.length).toBe(9)
+})
+
+test('pane: a docked pane keeps its footer on the last rows; one in the flow ends where its content does', () => {
+  const docked = layoutPane(input({ rows: 40, pin: true }))
+  const flow = layoutPane(input({ rows: 40 }))
+  expect(docked.height).toBe(40)
+  expect(flow.height).toBeLessThan(40)
+  expect(docked.blocks.slice(-3).map(b => b.kind)).toEqual(['rule', 'footer', 'footer'])
+  // the rows added are blank ones, between the detail and the footer's rule
+  const pad = docked.blocks.length - flow.blocks.length
+  expect(pad).toBe(40 - flow.height)
+  const at = docked.blocks.length - 3
+  expect(docked.blocks.slice(at - pad, at).every(b => b.kind === 'text' && b.line.length === 0)).toBe(true)
+  // the same blocks otherwise
+  expect(textOf(docked).filter(x => x !== '')).toEqual(textOf(flow).filter(x => x !== ''))
+  // a pane that needs more rows than it was given is not padded
+  expect(layoutPane(input({ rows: 8, pin: true })).height).toBe(8)
+  // in every size the footer is the last block
+  for (let rows = 3; rows <= 50; rows++) {
+    const l = layoutPane(input({ rows, pin: true }))
+    expect(l.blocks[l.blocks.length - 1]!.kind).toBe('footer')
+    expect(l.height).toBe(Math.max(rows, 5))
+  }
+})
+
+test('pane: the warnings count is in the footer only when there is something to count', () => {
+  const warnOf = (layout: PaneLayout) => layout.blocks.flatMap(b => (b.kind === 'footer' && b.line.warn !== null ? [b.line.warn] : []))
+  expect(warnOf(layoutPane(input()))).toEqual([])
+  const warned = layoutPane(input({ model: { ...modelOf(sampleNodes()), warningCount: 2 } }))
+  expect(warnOf(warned)).toEqual([{ kind: 'warn', text: '警告 2', count: 2 }])
+  const en = layoutPane(input({ lang: 'en', model: { ...modelOf(sampleNodes()), warningCount: 1 } }))
+  expect(warnOf(en)).toEqual([{ kind: 'warn', text: 'Warnings 1', count: 1 }])
+  // flush right on the first footer line, with the keys before it
+  const first = warned.blocks.find((b): b is Extract<Block, { kind: 'footer' }> => b.kind === 'footer')!
+  expect(blockWidth(first)).toBe(GUTTER + innerWidth(68))
 })
 
 test('pane: a tree that began elsewhere says where under the header, when there is room', () => {
@@ -763,14 +1047,15 @@ test('pane: a tree that began elsewhere says where under the header, when there 
   const layout = layoutPane(forked())
   checkLayout(layout, forked(), 'forked')
   const t = textOf(layout)
-  expect(t[0]!.startsWith('决策树 [sql-v3] · ')).toBe(true)
-  expect(t[1]).toBe(`基于 main 的 #17（${when}）· SQL 第三版`)
-  // under it, what always follows the header
-  expect(t[2]).toBe('─'.repeat(68))
+  expect(t[0]!.startsWith('  决策树  orders-api-rewrite  [sql-v3] ')).toBe(true)
+  expect(t[1]).toBe(`  基于 main 的 #17（${when}）· SQL 第三版`)
+  // under it, the blank row that follows the header when there is room, then the mainline
+  expect(t[2]).toBe('')
+  expect(t[3]!.startsWith('  主线')).toBe(true)
   const origin = layout.blocks[1] as Extract<Block, { kind: 'text' }>
   expect(origin.kind).toBe('text')
-  expect(origin.line[0]!.dim).toBe(true)
-  expect(textOf(layoutPane(forked({ lang: 'en' })))[1]).toBe(`from main at #17 (${when}) · SQL 第三版`)
+  expect(origin.line[1]!.dim).toBe(true)
+  expect(textOf(layoutPane(forked({ lang: 'en' })))[1]).toBe(`  from main at #17 (${when}) · SQL 第三版`)
 
   // from ORIGIN_MIN_ROWS rows up; a smaller pane keeps its rows for the tree
   expect(ORIGIN_MIN_ROWS).toBe(16)
@@ -779,21 +1064,23 @@ test('pane: a tree that began elsewhere says where under the header, when there 
     const l = layoutPane(i)
     checkLayout(l, i, `${rows} rows`)
     expect(l.height).toBeLessThanOrEqual(rows)
-    expect(textOf(l).some(x => x.startsWith('基于 main'))).toBe(rows >= ORIGIN_MIN_ROWS)
+    expect(textOf(l).some(x => x.startsWith('  基于 main'))).toBe(rows >= ORIGIN_MIN_ROWS)
   }
-  // the line takes a row from the tree, not from the room around it
+  // the line takes a row from the tree, not from the room around it (the tree has one row fewer, or two when it
+  // no longer fits whole and a row says how many are not drawn)
   for (const rows of [ORIGIN_MIN_ROWS, ORIGIN_MIN_ROWS + 1]) {
     const plainTree = layoutPane(forked({ rows, model: modelOf(sampleNodes()) }))
     const withOrigin = layoutPane(forked({ rows }))
-    expect(withOrigin.drawn.length).toBe(plainTree.drawn.length - 1)
+    expect(plainTree.drawn.length - withOrigin.drawn.length).toBeGreaterThanOrEqual(1)
+    expect(plainTree.drawn.length - withOrigin.drawn.length).toBeLessThanOrEqual(2)
     expect(withOrigin.height).toBe(plainTree.height)
   }
 
   // only for a tree other than main, and only when the tree knows where it began
-  expect(textOf(layoutPane(input({ model: { ...modelOf(sampleNodes()), fork: FORK } }))).some(x => x.startsWith('基于'))).toBe(false)
-  expect(textOf(layoutPane(forked({ model: modelOf(sampleNodes()) }))).some(x => x.startsWith('基于') || x.startsWith('从空白'))).toBe(false)
+  expect(textOf(layoutPane(input({ model: { ...modelOf(sampleNodes()), fork: FORK } }))).some(x => x.startsWith('  基于'))).toBe(false)
+  expect(textOf(layoutPane(forked({ model: modelOf(sampleNodes()) }))).some(x => x.startsWith('  基于') || x.startsWith('  从空白'))).toBe(false)
   const empty: DtFork = { tree: 'main', at: null, count: 0, ts: iso(FORK_AT), actor: 'user' }
-  expect(textOf(layoutPane(forked({ model: { ...modelOf(sampleNodes()), fork: empty } })))[1]).toBe('从空白开始')
+  expect(textOf(layoutPane(forked({ model: { ...modelOf(sampleNodes()), fork: empty } })))[1]).toBe('  从空白开始')
 })
 
 test('pane: without a status command there is no "now" block and no s key', () => {
@@ -804,16 +1091,23 @@ test('pane: without a status command there is no "now" block and no s key', () =
   expect(keys.some(i => i.kind === 'key' && i.hotkey === 's')).toBe(false)
 })
 
-test('pane: the filter name sits on the rule above the tree', () => {
+test('pane: the filter that is on is named in the row above the tree', () => {
   for (const [filter, label] of [
     ['all', '显示全部'],
     ['pending', '只看待定'],
     ['clean', '已隐藏否决'],
   ] as const) {
-    const t = textOf(layoutPane(input({ ui: { ...UI0, filter } })))
-    expect(t.filter(x => x.includes(` ${label} `)).length).toBe(1)
+    const layout = layoutPane(input({ ui: { ...UI0, filter } }))
+    const t = textOf(layout)
+    expect(t.filter(x => x.includes(label))).toEqual([`  ${label}`])
+    // in its own row, the last one before the tree, in the accent colour
+    const at = t.indexOf(`  ${label}`)
+    expect(layout.blocks[at + 1]!.kind).toBe('row')
+    expect((layout.blocks[at] as Extract<Block, { kind: 'text' }>).line[1]).toEqual({ text: label, color: 'suggestion' })
   }
-  expect(textOf(layoutPane(input())).some(x => /─ .+ ──$/.test(x))).toBe(false)
+  // with the default filter there is no such row, and no label hanging off a rule
+  expect(textOf(layoutPane(input())).some(x => /─ .+ ──$/.test(x) || x.includes('显示全部') || x.includes('只看待定'))).toBe(false)
+  expect(textOf(layoutPane(input({ lang: 'en', ui: { ...UI0, filter: 'pending' } }))).filter(x => x.includes('pending only'))).toEqual(['  pending only'])
 })
 
 test('pane: nothing recorded yet, and nothing matching the filter, each say so', () => {
@@ -883,7 +1177,7 @@ test('pane: the edit form replaces the detail and keeps its four rows', () => {
   expect(at).toBeGreaterThan(0)
   const edit = layout.blocks[at] as Extract<Block, { kind: 'edit' }>
   expect(edit.id).toBe('v22-adopted')
-  expect(lineText(edit.title)).toBe('编辑 v22-adopted')
+  expect(lineText(edit.title)).toBe('  编辑 v22-adopted')
   expect(textOf(layout).some(x => x.startsWith('▾ 构建版本定为'))).toBe(false)
   expect(layout.height).toBeLessThanOrEqual(30)
   // editing another node's form is not shown on this selection
@@ -892,13 +1186,18 @@ test('pane: the edit form replaces the detail and keeps its four rows', () => {
   expect(EDIT_ROWS).toBe(4)
 })
 
-test('pane: approval asks first and carries the Allow button inside the now block', () => {
+test('pane: approval asks first and carries the Allow button at the end of the now block', () => {
   const layout = layoutPane(input({ now: NOW_PENDING, statusInterval: 30 }))
   const kinds = layout.blocks.map(b => b.kind)
   const at = kinds.indexOf('allow')
   expect(at).toBeGreaterThan(1)
   expect((layout.blocks[at] as Extract<Block, { kind: 'allow' }>).label).toBe('允许运行')
-  expect(kinds[at + 1]).toBe('rule')
+  // the rule is above the block, and after the button the tree begins (after a blank row, when there is room)
+  const t = textOf(layout)
+  expect(t[at - 5]!.startsWith('  ─')).toBe(true)
+  expect(t[at - 4]).toBe('  现在')
+  expect(kinds.slice(at + 1, at + 3)).toEqual(['text', 'row'])
+  expect(t[at + 1]).toBe('')
 })
 
 test('pane: whatever the width, height, language, filter and state, every line fits and the selection shows', () => {
@@ -938,7 +1237,7 @@ test('pane: whatever the width, height, language, filter and state, every line f
 test('pane: ASCII mode uses no glyph that a narrow-ambiguous terminal might draw wide', () => {
   const layout = layoutPane(input({ ascii: true, lang: 'en', now: nowApproved(), statusInterval: 30, ui: { ...UI0, selected: 'v22-adopted' } }))
   const text = textOf(layout).join('\n')
-  expect(/[✓✗◐○⊘‖◌├└│█░─❯›▾▸▲▼]/.test(text.replace(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef−]/g, ''))).toBe(false)
+  expect(/[✓✗◐○⊘‖◌├└│█░─❯›▾▸▲▼▎▌●]/.test(text.replace(/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef−]/g, ''))).toBe(false)
 })
 
 // ---------------------------------------------------------------- who decided, and titles with nothing to see
@@ -952,22 +1251,22 @@ test('detail: the line under the title says who decided, else who recorded it', 
   const decided = { decidedBy: 'gate' as const, decidedAt: noon(10, 9) }
 
   // decided: whoever decided it and the day it was decided, however it was recorded
-  expect(detail(decided)).toEqual([...title, '  ✓ Adopted · gate · 10-09'])
-  expect(detail({ decidedBy: 'user', decidedAt: noon(10, 9), createdBy: 'import' })).toEqual([...title, '  ✓ Adopted · user · 10-09'])
+  expect(detail(decided)).toEqual([...title, '  ✓ Adopted   gate   10-09'])
+  expect(detail({ decidedBy: 'user', decidedAt: noon(10, 9), createdBy: 'import' })).toEqual([...title, '  ✓ Adopted   user   10-09'])
   // not decided: whoever recorded it and the day it was recorded
-  expect(detail({})).toEqual([...title, '  ✓ Adopted · model · 10-08'])
-  expect(detail({ createdBy: 'import' })).toEqual([...title, '  ✓ Adopted · import · 10-08'])
-  expect(detail({ status: 'in-progress', createdBy: 'user' })).toEqual([...title, '  ◐ In progress · user · 10-08'])
+  expect(detail({})).toEqual([...title, '  ✓ Adopted   model   10-08'])
+  expect(detail({ createdBy: 'import' })).toEqual([...title, '  ✓ Adopted   import   10-08'])
+  expect(detail({ status: 'in-progress', createdBy: 'user' })).toEqual([...title, '  ◐ In progress   user   10-08'])
   // a day that does not read is left out, and so is nothing else
-  expect(detail({ decidedBy: 'gate', createdAt: 'unknown' }).at(-1)).toBe('  ✓ Adopted · gate')
+  expect(detail({ decidedBy: 'gate', createdAt: 'unknown' }).at(-1)).toBe('  ✓ Adopted   gate')
 
   // the same in the other language, and in ASCII
-  expect(detail(decided, 'zh', '一个非常非常长的标题'.repeat(2))).toEqual(['▾ 一个非常非常长的标题一个非常非常长的标', '  题', '  ✓ 采用 · gate · 10-09'])
-  expect(detail(decided, 'en', long, 40, true)).toEqual(['v a title long enough to need its own', '  lines in a narrow pane', '  + Adopted · gate · 10-09'])
+  expect(detail(decided, 'zh', '一个非常非常长的标题'.repeat(2))).toEqual(['▾ 一个非常非常长的标题一个非常非常长的标', '  题', '  ✓ 采用   gate   10-09'])
+  expect(detail(decided, 'en', long, 40, true)).toEqual(['v a title long enough to need its own', '  lines in a narrow pane', '  + Adopted   gate   10-09'])
 
-  // it goes up beside the title when the two fit together in the pane: 12 + 4 + 24 columns
-  expect(detail(decided, 'en', 'x'.repeat(12))).toEqual(['▾ xxxxxxxxxxxx  ✓ Adopted · gate · 10-09'])
-  expect(detail(decided, 'en', 'x'.repeat(13))).toEqual(['▾ xxxxxxxxxxxxx', '  ✓ Adopted · gate · 10-09'])
+  // it is always a line of its own, under the title, however short the title is
+  expect(detail(decided, 'en', 'x'.repeat(12))).toEqual(['▾ xxxxxxxxxxxx', '  ✓ Adopted   gate   10-09'])
+  expect(detail(decided, 'en', 'x'.repeat(13))).toEqual(['▾ xxxxxxxxxxxxx', '  ✓ Adopted   gate   10-09'])
 })
 
 test('pane: titles, summaries, evidence, notes and sources full of emoji sequences are drawn without joiners, selectors or flags, and still fit', () => {
@@ -1018,38 +1317,41 @@ test('pane: titles, summaries, evidence, notes and sources full of emoji sequenc
     }
   }
 
-  // where there is room, each line is the tidy text and nothing else
-  const rule = '─'.repeat(100)
-  const row = (left: string, right: string) => left + ' '.repeat(100 - strWidth(left) - strWidth(right)) + right
+  // where there is room, each line is the tidy text and nothing else (the selected row is the bar, padded to the pane's width)
+  const rule = '  ' + '─'.repeat(97)
+  const bar = (left: string) => left + ' '.repeat(100 - strWidth(left))
   const t = draw('en', 100, 'root')
-  expect(t[0]!.startsWith(`Decision tree · Project ${TIDY} `)).toBe(true)
-  expect(t.slice(1, 17)).toEqual([
+  expect(t[0]!.startsWith(`  Decision tree  Project ${TIDY} `)).toBe(true)
+  expect(t.slice(1, 18)).toEqual([
+    '',
+    `  Mainline  Title ${TIDY}`,
+    '',
+    bar(`▌ ✓ Title ${TIDY}`),
+    `    ✓ Kid ${TIDY}`,
     rule,
-    `Mainline  Title ${TIDY}`,
-    rule,
-    row(`❯ ✓ Title ${TIDY}`, '10-09'),
-    row(`  └ ✓ Kid ${TIDY}`, '10-10'),
-    rule,
-    row(`▾ Title ${TIDY}`, '✓ Adopted · user · 10-09'),
+    `▾ Title ${TIDY}`,
+    '  ✓ Adopted   user   10-09',
+    '',
     `  Summary ${TIDY}`,
-    '  Rationale',
-    `    Because ${TIDY}`,
-    '  Evidence',
-    `    label ${TIDY}  value ${TIDY} [❤, CN]  run_\u{1F468}\u{1F469}\u{1F467}`,
-    `    only a note ❤  note ${TIDY}`,
-    `  Sources  docs/${TIDY}.md  1.txt`,
-    '  Tags  tag❤, CN',
+    '',
+    `  Rationale  Because ${TIDY}`,
+    `  Evidence   label ${TIDY}  value ${TIDY} [❤, CN]  run_\u{1F468}\u{1F469}\u{1F467}`,
+    `             only a note ❤${' '.repeat(strWidth(`label ${TIDY}`) - strWidth('only a note ❤'))}  note ${TIDY}`,
+    `  Sources    docs/${TIDY}.md  1.txt`,
+    '  Tags       tag❤, CN',
     rule,
   ])
   const k = draw('en', 100, 'kid')
-  expect(k.slice(4, 11)).toEqual([
-    row(`  ✓ Title ${TIDY}`, '10-09'),
-    row(`❯ └ ✓ Kid ${TIDY}`, '10-10'),
+  expect(k.slice(4, 13)).toEqual([
+    `▎ ✓ Title ${TIDY}`,
+    bar(`▌   ✓ Kid ${TIDY}`),
     rule,
-    row(`▾ Kid ${TIDY}`, '✓ Adopted · model · 10-10'),
-    '  Notes',
-    `    10-10 user  Note ${TIDY} ${TIDY}`,
+    `▾ Kid ${TIDY}`,
+    '  ✓ Adopted   model   10-10',
+    '',
+    `  Notes  10-10 user  Note ${TIDY} ${TIDY}`,
     rule,
+    '[footer 7]',
   ])
 })
 
@@ -1078,13 +1380,13 @@ test('pane: a title that is only invisible characters draws as untitled', () => 
     const t = textOf(layout)
     // two rows and the detail, none of them empty; the third title is what is left of it
     expect(t.filter(x => x.includes(untitled))).toHaveLength(3)
-    expect(t.some(x => x.startsWith(`❯ ✓ ${untitled} `))).toBe(true)
-    expect(t.some(x => x.startsWith(`  ├ ✓ ${untitled} `))).toBe(true)
-    expect(t.some(x => x.startsWith('  └ ✓ ab '))).toBe(true)
-    expect(t.some(x => x.startsWith(`▾ ${untitled} `))).toBe(true)
+    expect(t.some(x => x.startsWith(`▌ ✓ ${untitled} `))).toBe(true)
+    expect(t).toContain(`    ✓ ${untitled}`)
+    expect(t).toContain('    ✓ ab')
+    expect(t).toContain(`▾ ${untitled}`)
     // the node with something left shows it in its detail
     const half = textOf(layoutPane(input({ lang, model: modelOf(nodes), ui: { ...UI0, selected: 'half' } })))
-    expect(half.some(x => x.startsWith('▾ ab '))).toBe(true)
+    expect(half).toContain('▾ ab')
     expect(half.some(x => x.includes(untitled))).toBe(true)
   }
 })

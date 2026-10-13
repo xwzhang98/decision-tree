@@ -384,15 +384,63 @@ function tokenize(line: string): Token[] {
   return tokens
 }
 
+/**
+ * Marks that do not begin a line (closing brackets and quotes, stops, the dash and the ellipsis) and marks that do
+ * not end one (opening brackets and quotes): the line-breaking rules of Chinese and Japanese. They only matter
+ * where a line may break between two characters with no space, which is between CJK characters.
+ */
+const NO_START = new Set([...'，。、．；：！？）］｝】〕〉》」』”’…‥—～,.;:!?)]}'])
+const NO_END = new Set([...'（［｛【〔〈《「『“‘([{'])
+
+function firstChar(s: string): string {
+  return String.fromCodePoint(s.codePointAt(0)!)
+}
+
+function lastChar(s: string): string {
+  const chars = [...s]
+  return chars[chars.length - 1] ?? ''
+}
+
+/** True when a line may break between two tokens that follow each other in the text. */
+function mayBreak(a: Token, b: Token): boolean {
+  if (a.isSpace || b.isSpace) return true
+  return !NO_START.has(firstChar(b.text)) && !NO_END.has(lastChar(a.text))
+}
+
+/** The most tokens a line gives up to the next one to keep a mark off the edge it must not touch. */
+const MAX_CARRY = 3
+
 function wrapLine(line: string, width: number): string[] {
   if (line === '') return ['']
   const out: string[] = []
-  let cur = ''
+  let cur: Token[] = []
   let curW = 0
   const push = () => {
-    out.push(cur.replace(/ +$/, ''))
-    cur = ''
+    out.push(cur.map(t => t.text).join('').replace(/ +$/, ''))
+    cur = []
     curW = 0
+  }
+  /**
+   * Ends the line before `next`. When that would leave a closing mark at the start of the next line, or an
+   * opening bracket at the end of this one, the last token or two go down with it, as long as they fit there.
+   */
+  const breakBefore = (next: Token) => {
+    let keep = cur.length
+    if (cur.length > 1 && !mayBreak(cur[cur.length - 1]!, next)) {
+      let moved = 0
+      for (let at = cur.length - 1; at >= 1 && at >= cur.length - MAX_CARRY; at--) {
+        moved += cur[at]!.width
+        if (moved + next.width > width) break
+        if (mayBreak(cur[at - 1]!, cur[at]!)) {
+          keep = at
+          break
+        }
+      }
+    }
+    const carried = cur.splice(keep)
+    push()
+    cur = carried
+    curW = carried.reduce((sum, t) => sum + t.width, 0)
   }
   for (const tok of tokenize(line)) {
     if (tok.isSpace) {
@@ -402,7 +450,7 @@ function wrapLine(line: string, width: number): string[] {
         push()
         continue
       }
-      cur += tok.text
+      cur.push(tok)
       curW += tok.width
       continue
     }
@@ -411,22 +459,23 @@ function wrapLine(line: string, width: number): string[] {
       for (const ch of tok.text) {
         const cw = charWidth(ch.codePointAt(0)!)
         if (curW + cw > width && curW > 0) push()
-        cur += ch
+        cur.push({ text: ch, width: cw, isSpace: false })
         curW += cw
       }
       continue
     }
-    if (curW + tok.width > width) push()
-    cur += tok.text
+    if (curW + tok.width > width) breakBefore(tok)
+    cur.push(tok)
     curW += tok.width
   }
-  if (cur !== '' || out.length === 0) push()
+  if (cur.length > 0 || out.length === 0) push()
   return out
 }
 
 /**
  * Wraps `s` to at most `width` columns per line: at spaces between words, and
- * between any two CJK characters. Newlines in `s` start new lines. The lines are what
+ * between any two CJK characters, except that a closing mark (，。）…) never starts a line
+ * and an opening bracket never ends one. Newlines in `s` start new lines. The lines are what
  * `drawable(s)` is made of, because that is what gets drawn.
  */
 export function wrap(s: string, width: number): string[] {

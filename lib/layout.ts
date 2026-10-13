@@ -7,11 +7,11 @@
 
 import type { DtEvidence, DtFilter, DtFork, DtLane, DtLang, DtMode, DtModel, DtNode, DtNow, DtProject, DtUi } from '../types'
 import { fmtClock, fmtDate } from './events'
-import { MAINLINE_SEP, glyphOf, isQuiet, toneOf } from './glyphs'
+import { COLORS, MAINLINE_SEP, MARKS, glyphOf, isQuiet, toneOf } from './glyphs'
 import { statusLabel, t } from './i18n'
 import { baseName } from './project'
 import type { Line, Span } from './spans'
-import { fitSpans, indent, lineWidth, ruleLine, sp, truncateSpans } from './spans'
+import { barLine, fitSpans, indent, lineWidth, ruleLine, truncateSpans } from './spans'
 import { describeArgv, isStale, minutesSince, progressBar, stepText } from './status'
 import type { Row, TreeIndex } from './tree'
 import { buildIndex, effectiveSelection, rowIndex, trunkNodes, supersededNodes, visibleRows, windowRows } from './tree'
@@ -23,13 +23,29 @@ import { padEnd, padStart, plain, strWidth, truncate, wrap } from './width'
 type Style = Omit<Span, 'text'>
 
 /** A span that carries only the style fields that are set. */
-function S(text: string, style: { color?: string; dim?: boolean; bold?: boolean; inverse?: boolean } = {}): Span {
+function S(text: string, style: { color?: string; bg?: string; dim?: boolean; bold?: boolean; inverse?: boolean } = {}): Span {
   const out: Span = { text }
   if (style.color !== undefined) out.color = style.color
+  if (style.bg !== undefined) out.bg = style.bg
   if (style.dim === true) out.dim = true
   if (style.bold === true) out.bold = true
   if (style.inverse === true) out.inverse = true
   return out
+}
+
+/** Columns before the content: the mark column (the mainline's spine, the selection bar) and a blank. */
+export const GUTTER = 2
+/** Blank columns kept free at the right edge. */
+export const EDGE = 1
+
+/** The columns the content may use in a pane `width` wide. */
+export function innerWidth(width: number): number {
+  return Math.max(8, width - GUTTER - EDGE)
+}
+
+/** A line of the content, set in from the pane's edge by the gutter. */
+function lead(line: Line): Line {
+  return [indent(GUTTER), ...line]
 }
 
 function nonEmpty(s: string | undefined | null): s is string {
@@ -62,25 +78,53 @@ export type HeaderInput = {
   mode: DtMode
   count: number
   lastEventAt: string | null
-  /** The tree in use when it is not the main one: shown right after the title, where narrow panes still show it. */
+  /** The tree in use when it is not the main one: a tag after the name, kept when the pane is narrow. */
   tree?: string
+  ascii?: boolean
 }
 
-/** `决策树 [sql-v3] · orders-api-rewrite        记录中 · 23 个决定 · 00:12 更新` */
+/** The columns the project name keeps at the least, however narrow the pane. */
+const MIN_NAME = 6
+
+/**
+ * `决策树  orders-api  [sql-v3]               ● 记录中   23 个决定   00:12 更新`: the name in bold, the rest quiet.
+ * The name has the first claim on the room (a long one is cut to under half of the pane); what is left goes to
+ * the state on the right, which gives up the clock, then the count, then its word; the tree's name stays.
+ */
 export function headerLine(h: HeaderInput): Line {
-  const left: Line = [S(t(h.lang, 'pane.title'), { bold: true })]
-  if (h.tree !== undefined && h.tree !== 'main') left.push(S(` [${plain(h.tree)}]`, { color: 'suggestion' }))
+  const title = S(t(h.lang, 'pane.title'), { dim: true })
   const name = plain(h.title)
-  if (name !== '') left.push(S(' · ', { dim: true }), S(name))
-  const right: Line = []
-  if (h.mode !== 'off') {
-    right.push(h.mode === 'paused' ? S(t(h.lang, 'pane.state.paused'), { color: 'warning' }) : S(t(h.lang, 'pane.state.recording'), { color: 'success' }))
-    const count = h.count === 1 ? t(h.lang, 'pane.count.one') : t(h.lang, 'pane.count.many', { n: h.count })
-    right.push(S(` · ${count}`, { dim: true }))
-    const clock = fmtClock(h.lastEventAt)
-    if (clock !== '') right.push(S(` · ${t(h.lang, 'pane.updated', { time: clock })}`, { dim: true }))
+  const chip = h.tree !== undefined && h.tree !== 'main' ? S(`[${plain(h.tree)}]`, { color: 'suggestion' }) : null
+  const left = (shown: string): Line => {
+    const line: Line = [title]
+    if (shown !== '') line.push(S('  '), S(shown, { bold: true }))
+    if (chip !== null) line.push(S('  '), chip)
+    return line
   }
-  return fitSpans(left, right, h.width, 2)
+  if (h.mode === 'off') return fitSpans(left(name), [], h.width, 2)
+
+  const paused = h.mode === 'paused'
+  const dot = S(h.ascii === true ? MARKS.dot.ascii : MARKS.dot.unicode, { color: paused ? 'warning' : 'success' })
+  const word = S(' ' + t(h.lang, paused ? 'pane.state.paused' : 'pane.state.recording'), paused ? { color: 'warning' } : { dim: true })
+  const count = S('   ' + (h.count === 1 ? t(h.lang, 'pane.count.one') : t(h.lang, 'pane.count.many', { n: h.count })), { dim: true })
+  const clock = fmtClock(h.lastEventAt)
+  const updated = clock === '' ? null : S('   ' + t(h.lang, 'pane.updated', { time: clock }), { dim: true })
+  // what the right side says, most to least
+  const options: Line[] = []
+  if (updated !== null) options.push([dot, word, count, updated])
+  options.push([dot, word, count], [dot, word], [dot])
+
+  const bare = lineWidth(left(''))
+  const gap = name === '' ? 2 : 4
+  const want = Math.min(strWidth(name), Math.max(MIN_NAME, Math.floor(h.width * 0.45)))
+  for (const right of options) {
+    const room = h.width - bare - lineWidth(right) - gap
+    if (room >= want) return fitSpans(left(truncate(name, room)), right, h.width, 2)
+  }
+  // not even the shortest right side leaves the name its room: it is cut to what there is, or left out
+  const last = options[options.length - 1]!
+  const room = h.width - bare - lineWidth(last) - gap
+  return fitSpans(left(room >= MIN_NAME ? truncate(name, room) : ''), last, h.width, 2)
 }
 
 /** `基于 main 的 #17（10-08 17:44）· SQL 第三版`: where the tree in use began, dim, under the header. */
@@ -95,20 +139,50 @@ export function originLine(fork: DtFork, o: { width: number; lang: DtLang }): Li
 
 // ---------------------------------------------------------------- mainline
 
-// older steps are cut shorter than the newest, which is what the person is on
-const MAINLINE_ITEM = 22
-const MAINLINE_LAST = 44
+const BREAKS = /[：:，,；;（(]/g
 
-/** `主线  design v2 › exp-2 › 连接池 › gateway ◐`: the newest items that fit, older ones as `…`. */
+/**
+ * The front of a title: up to its first colon, comma, semicolon or bracket when that leaves at least `min`
+ * columns, else the whole title. Titles written as a sentence ("v22: why the pool is relative, and how")
+ * read as their subject in the mainline.
+ */
+export function shortTitle(title: string, min = 8): string {
+  const text = title.trim()
+  for (const m of text.matchAll(BREAKS)) {
+    const head = text.slice(0, m.index).trimEnd()
+    if (strWidth(head) >= min) return head
+  }
+  return text
+}
+
+/** What a cut title must not end on: a space, or a sign that joins it to what was cut off (`PgBouncer +…`). */
+const DANGLING = /[\s+&/→\-–—:;,，、：；(（]+$/u
+
+/** `text` cut to `limit` columns, at a space when that costs less than the last 40% of the room. */
+function cutWords(text: string, limit: number): string {
+  const cut = truncate(text, limit)
+  if (cut === text) return text
+  const body = cut.slice(0, -1)
+  const at = body.lastIndexOf(' ')
+  const head = at > 0 && strWidth(body.slice(0, at)) >= Math.floor(limit * 0.6) ? body.slice(0, at) : body
+  const tidy = head.replace(DANGLING, '')
+  return (tidy === '' ? head : tidy) + '…'
+}
+
+/** `主线  … › 连接池 › gateway ○`: the newest steps that fit, older ones as `…`, the newest in full strength. */
 export function mainlineLine(trunk: readonly DtNode[], o: { width: number; ascii: boolean; lang: DtLang }): Line | null {
   if (trunk.length === 0) return null
-  const head: Line = [S(t(o.lang, 'pane.mainline'), { dim: true }), S('  ')]
+  const head: Line = [S(t(o.lang, 'pane.mainline'), { color: COLORS.mainline }), S('  ')]
   const sepText = o.ascii ? MAINLINE_SEP.ascii : MAINLINE_SEP.unicode
   const sep = S(sepText, { dim: true })
+  // older steps are cut shorter than the newest, which is what the person is on
+  const lastMax = Math.min(48, Math.max(24, Math.floor(o.width * 0.4)))
+  const itemMax = Math.min(28, Math.max(14, Math.floor(o.width * 0.24)))
   const items: Line[] = trunk.map((n, k) => {
+    const newest = k === trunk.length - 1
     const tone = toneOf(n.status)
-    const limit = k === trunk.length - 1 ? MAINLINE_LAST : MAINLINE_ITEM
-    const parts: Line = [S(truncate(plain(n.title) || t(o.lang, 'r.untitled'), limit), { dim: isQuiet(n.status) })]
+    const title = shortTitle(plain(n.title) || t(o.lang, 'r.untitled'))
+    const parts: Line = [S(cutWords(title, newest ? lastMax : itemMax), { dim: !newest || isQuiet(n.status) })]
     if (n.status !== 'adopted') parts.push(S(' '), S(glyphOf(n.status, o.ascii), { color: tone.color, dim: tone.dim }))
     return parts
   })
@@ -138,45 +212,66 @@ export function mainlineLine(trunk: readonly DtNode[], o: { width: number; ascii
 
 // ---------------------------------------------------------------- tree rows
 
-function showsLabel(n: DtNode, depth: number): boolean {
-  if (n.status === 'in-progress') return true
-  return depth <= 1 && (n.status === 'planned' || n.status === 'proposed' || n.status === 'deferred')
-}
-
-/** The dim note at the end of a row: collapsed count, then label or date. */
-export function rowNote(row: Row, lang: DtLang): string {
-  const n = row.node
+/**
+ * The end of a row, quiet: how many rows a collapsed node hides, and that a node was retracted. What a node
+ * is, is said by its glyph and, once it is selected, by its detail.
+ */
+function noteSpans(row: Row, lang: DtLang): Line {
   const parts: string[] = []
   if (row.hiddenKids > 0) parts.push(`+${row.hiddenKids}`)
-  if (n.retracted !== undefined) parts.push(t(lang, 'pane.retracted'))
-  else if (showsLabel(n, row.depth)) parts.push(statusLabel(lang, n.status))
-  else if (row.depth <= 1) {
-    const d = fmtDate(n.decidedAt ?? n.createdAt)
-    if (d !== '') parts.push(d)
-  }
-  return parts.join(' ')
+  if (row.node.retracted !== undefined) parts.push(t(lang, 'pane.retracted'))
+  return parts.length === 0 ? [] : [S(parts.join(' '), { dim: true })]
 }
 
-export const GUTTER = 2
+/** The note at the end of a row, as plain text. */
+export function rowNote(row: Row, lang: DtLang): string {
+  return noteSpans(row, lang).map(s => s.text).join('')
+}
 
-/** One row of the tree: gutter marker, guides, glyph, title, and the note flush right. */
-export function treeRowLine(row: Row, o: { width: number; selected: boolean; ascii: boolean; lang: DtLang }): Line {
+/** Columns a level of depth moves a row in. */
+export const STEP = 2
+/** The least room a title keeps however deep the tree goes. */
+const MIN_TITLE = 24
+
+/** How a tree of this depth is indented in `width` columns: two columns a level, one when that does not fit. */
+export function indentPlan(rows: readonly Row[], width: number): { step: number; cap: number } {
+  const depth = rows.reduce((m, r) => Math.max(m, r.depth), 0)
+  const cap = Math.max(0, width - EDGE - GUTTER - 2 - MIN_TITLE)
+  return { step: depth * STEP <= cap ? STEP : 1, cap }
+}
+
+/**
+ * One row of the tree, `width` columns across the whole pane: the mark column (the mainline's spine, or the
+ * selection's bar), the indent, the status glyph, the title, and the note flush right. The selected row
+ * is a bar from edge to edge.
+ */
+export function treeRowLine(row: Row, o: { width: number; selected: boolean; ascii: boolean; lang: DtLang; step?: number; cap?: number }): Line {
   const n = row.node
   const tone = toneOf(n.status)
   const quiet = isQuiet(n.status) || n.retracted !== undefined
-  const left: Line = [o.selected ? S(o.ascii ? '> ' : '❯ ', { bold: true }) : indent(GUTTER)]
-  if (row.prefix !== '') left.push(S(row.prefix, { dim: true }))
-  left.push(S(glyphOf(n.status, o.ascii), { color: tone.color, dim: tone.dim }))
+  const marks = o.ascii ? { spine: MARKS.spine.ascii, bar: MARKS.bar.ascii } : { spine: MARKS.spine.unicode, bar: MARKS.bar.unicode }
+  const mark = o.selected ? S(marks.bar, { color: COLORS.mark }) : n.trunk === true ? S(marks.spine, { color: COLORS.mainline }) : S(' ')
+  const ind = Math.min(row.depth * (o.step ?? STEP), o.cap ?? Infinity)
+  const left: Line = [mark, S(' '), indent(ind)]
+  left.push(S(glyphOf(n.status, o.ascii), { color: tone.color, dim: tone.dim && !o.selected }))
   left.push(S(' '))
-  left.push(S(plain(n.title) || t(o.lang, 'r.untitled'), { bold: n.trunk === true || o.selected, dim: quiet }))
-  const note = rowNote(row, o.lang)
-  return fitSpans(left, note === '' ? [] : [S(note, { dim: true })], o.width, 2)
+  left.push(S(plain(n.title) || t(o.lang, 'r.untitled'), { bold: o.selected, dim: quiet && !o.selected }))
+  const line = fitSpans(left, noteSpans(row, o.lang), o.width - EDGE, 2)
+  return o.selected ? barLine(line, COLORS.selected, o.width) : line
 }
 
 // ---------------------------------------------------------------- detail
 
-/** An evidence line `label  value ci  run`, cut to `width`: the run goes first, then the label. */
-export function evidenceLine(ev: DtEvidence, width: number, ind: number): Line {
+/** A run name cut to fewer columns than this says nothing, so it is left out instead. */
+const MIN_RUN = 6
+
+/**
+ * An evidence line `label  value ci  run`, cut to `width`. With `labelW` the label is padded to that many columns,
+ * so that the values of several lines line up, as long as the value still fits beside it. What does not fit
+ * goes in this order: the run (cut when at least `MIN_RUN` columns of it can show, else dropped), then the
+ * end of the label.
+ */
+export function evidenceLine(ev: DtEvidence, width: number, ind: number, labelW = 0): Line {
   const room = Math.max(1, width - ind)
   const gap = 2
   const w = strWidth
@@ -187,14 +282,17 @@ export function evidenceLine(ev: DtEvidence, width: number, ind: number): Line {
   // a result with neither value nor interval may still carry a note
   const note = value === '' && ci === '' ? plain(ev.note ?? '') : ''
   const mid = [value, ci, note].filter(nonEmpty).join(' ')
-  const total = (l: string, r: string) => w(l) + (mid !== '' ? gap + w(mid) : 0) + (r !== '' ? gap + w(r) : 0)
+  const midW = mid !== '' ? gap + w(mid) : 0
 
-  if (total(label, run) > room && run !== '') {
-    const left = room - w(label) - (mid !== '' ? gap + w(mid) : 0) - gap
-    run = left >= 3 ? truncate(run, left) : ''
+  if (label !== '' && mid !== '' && labelW > w(label) && labelW + midW <= room) label = padEnd(label, labelW)
+
+  if (run !== '') {
+    const left = room - w(label) - midW - gap
+    if (w(run) > left) run = left >= MIN_RUN ? truncate(run, left) : ''
   }
-  if (total(label, run) > room) {
-    const left = room - (mid !== '' ? gap + w(mid) : 0) - (run !== '' ? gap + w(run) : 0)
+  const runW = run !== '' ? gap + w(run) : 0
+  if (w(label) + midW + runW > room) {
+    const left = room - midW - runW
     label = left >= 2 ? truncate(label, left) : ''
   }
 
@@ -204,10 +302,10 @@ export function evidenceLine(ev: DtEvidence, width: number, ind: number): Line {
     line.push(span)
   }
   if (label !== '') push(S(label))
-  if (value !== '' || ci !== '' || note !== '') {
+  if (mid !== '') {
     const text = [value, note].filter(nonEmpty).join(' ')
     const spans: Line = []
-    if (text !== '') spans.push(S(text, { bold: value !== '' }))
+    if (text !== '') spans.push(S(text))
     if (ci !== '') spans.push(S(text !== '' ? ` ${ci}` : ci, { dim: true }))
     if (line.length > 1) line.push(S(' '.repeat(gap)))
     line.push(...spans)
@@ -219,89 +317,119 @@ export function evidenceLine(ev: DtEvidence, width: number, ind: number): Line {
 export type DetailInput = {
   node: DtNode
   idx: TreeIndex
+  /** Columns across the whole pane that the lines may use, the gutter included. */
   width: number
   ascii: boolean
   lang: DtLang
   /** True when the node's children are drawn, false when they are collapsed, null for a leaf. */
   open: boolean | null
+  /** A blank line between the parts: set when the pane has room for them. */
+  roomy?: boolean
 }
 
 function wrapped(text: string, width: number, ind: number, style: { color?: string; dim?: boolean; bold?: boolean } = {}): Line[] {
   return wrap(text, Math.max(1, width - ind)).map(l => [indent(ind), S(l, style)])
 }
 
-/** The detail of one node (spec 9.4), every line at most `width` columns. */
+/** The least room the text of a labelled part keeps beside its label; narrower than that, the label goes above. */
+const MIN_BODY = 26
+
+/**
+ * The detail of one node (spec 9.4), every line at most `width` columns. The marker sits in the gutter and the
+ * text starts where the tree's does. Rationale, evidence, sources, tags and notes are a list of labels
+ * in a column, each over its text.
+ */
 export function detailLines(a: DetailInput): Line[] {
   const { node: n, width, lang, ascii } = a
   const out: Line[] = []
   const tone = toneOf(n.status)
+  const room = Math.max(1, width - GUTTER)
 
-  const marker = S(a.open === false ? (ascii ? '>' : '▸') : ascii ? 'v' : '▾', { dim: true })
+  const marker = S((a.open === false ? (ascii ? '>' : '▸') : ascii ? 'v' : '▾') + ' ', { dim: true })
+  const title = wrap(plain(n.title) || t(lang, 'r.untitled'), room)
+  title.slice(0, 3).forEach((l, i) => {
+    const last = i === 2 && title.length > 3
+    out.push([i === 0 ? marker : indent(GUTTER), S(last ? truncate(l + '…', room) : l, { bold: true })])
+  })
+
   const meta = [n.decidedBy ?? n.createdBy, fmtDate(n.decidedAt ?? n.createdAt)].filter(nonEmpty)
-  const right: Line = [S(`${glyphOf(n.status, ascii)} ${statusLabel(lang, n.status)}`, { color: tone.color })]
-  if (meta.length > 0) right.push(S(` · ${meta.join(' · ')}`, { dim: true }))
-  const title = plain(n.title) || t(lang, 'r.untitled')
-
-  if (strWidth(title) + 2 + 2 + lineWidth(right) <= width) {
-    out.push(fitSpans([marker, S(' '), S(title, { bold: true })], right, width, 2))
-  } else {
-    // a long title gets its own lines (three at most) and the status goes under it
-    const lines = wrap(title, Math.max(1, width - 2))
-    lines.slice(0, 3).forEach((l, i) => {
-      const last = i === 2 && lines.length > 3
-      out.push([i === 0 ? marker : indent(1), S(' '), S(last ? truncate(l + '…', Math.max(1, width - 2)) : l, { bold: true })])
-    })
-    out.push(truncateSpans([indent(2), ...right], width))
-  }
+  const status: Line = [indent(GUTTER), S(`${glyphOf(n.status, ascii)} ${statusLabel(lang, n.status)}`, { color: tone.color })]
+  if (meta.length > 0) status.push(S('   ' + meta.join('   '), { dim: true }))
+  out.push(truncateSpans(status, width))
 
   if (n.retracted !== undefined) {
     const by = t(lang, 'pane.retractedBy', { actor: n.retracted.actor })
     const reason = n.retracted.reason !== undefined && n.retracted.reason !== '' ? `: ${plain(n.retracted.reason)}` : ''
-    out.push(...wrapped(by + reason, width, 2, { color: 'error' }))
+    out.push(...wrapped(by + reason, width, GUTTER, { color: 'error' }))
   }
 
-  if (nonEmpty(n.summary)) out.push(...wrapped(n.summary, width, 2))
-
-  if (nonEmpty(n.rationale)) {
-    out.push([indent(2), S(t(lang, 'detail.rationale'), { dim: true })])
-    out.push(...wrapped(n.rationale, width, 4))
+  const gap = () => {
+    if (a.roomy === true) out.push([])
   }
-
   const evidence = n.evidence ?? []
-  if (evidence.length > 0) {
-    out.push([indent(2), S(t(lang, 'detail.evidence'), { dim: true })])
-    for (const ev of evidence) out.push(evidenceLine(ev, width, 4))
-  }
-
   const sources = n.sources ?? []
-  if (sources.length > 0) {
-    const label = t(lang, 'detail.sources')
-    const lead = 2 + strWidth(label) + 2
-    const body = wrap(sources.map(s => plain(s)).join('  '), Math.max(1, width - lead))
-    body.forEach((l, i) => {
-      out.push(i === 0 ? [indent(2), S(label, { dim: true }), S('  '), S(l)] : [indent(lead), S(l)])
-    })
-  }
-
-  if (nonEmpty(n.supersededBy)) out.push(...wrapped(t(lang, 'detail.supersededBy', { id: n.supersededBy }), width, 2, { dim: true }))
-  const older = supersededNodes(a.idx, n.id)
-  if (older.length > 0) {
-    out.push(...wrapped(t(lang, 'detail.supersedes', { ids: older.map(o => o.id).join(', ') }), width, 2, { dim: true }))
-  }
-
   const tags = n.tags ?? []
-  if (tags.length > 0) out.push(...wrapped(`${t(lang, 'detail.tags')}  ${tags.join(', ')}`, width, 2, { dim: true }))
+  const older = supersededNodes(a.idx, n.id)
+  const hasParts = nonEmpty(n.rationale) || evidence.length > 0 || sources.length > 0 || tags.length > 0 || n.notes.length > 0
+
+  if (nonEmpty(n.summary)) {
+    gap()
+    out.push(...wrapped(n.summary, width, GUTTER))
+  }
+  if (hasParts) gap()
+
+  // the labels share a column, unless that leaves too little room for the text
+  const labels = [
+    nonEmpty(n.rationale) ? t(lang, 'detail.rationale') : '',
+    evidence.length > 0 ? t(lang, 'detail.evidence') : '',
+    sources.length > 0 ? t(lang, 'detail.sources') : '',
+    tags.length > 0 ? t(lang, 'detail.tags') : '',
+    n.notes.length > 0 ? t(lang, 'detail.notes') : '',
+  ]
+  const labelW = labels.reduce((m, l) => Math.max(m, strWidth(l)), 0) + 2
+  const listed = room - labelW >= MIN_BODY
+  const bodyAt = listed ? GUTTER + labelW : GUTTER + 2
+  const bodyW = Math.max(1, width - bodyAt)
+
+  /** A labelled part: the label in the column beside the first line, or alone above the lines when stacked. */
+  const part = (label: string, lines: Line[]) => {
+    if (lines.length === 0) return
+    if (listed) {
+      const first = lines[0]!
+      // every line starts with the indent of the text column; the first one gives it up for the label
+      out.push([indent(GUTTER), S(padEnd(label, labelW), { dim: true }), ...first.slice(1)])
+      out.push(...lines.slice(1))
+    } else {
+      out.push([indent(GUTTER), S(label, { dim: true })], ...lines)
+    }
+  }
+  const body = (text: string, style: { dim?: boolean } = {}): Line[] => wrap(text, bodyW).map(l => [indent(bodyAt), S(l, style)])
+
+  if (nonEmpty(n.rationale)) part(t(lang, 'detail.rationale'), body(n.rationale))
+
+  if (evidence.length > 0) {
+    const wide = evidence.reduce((m, ev) => Math.max(m, strWidth(plain(ev.label))), 0)
+    const pad = Math.min(wide, Math.floor(bodyW * 0.5))
+    part(t(lang, 'detail.evidence'), evidence.map(ev => evidenceLine(ev, width, bodyAt, pad)))
+  }
+
+  if (sources.length > 0) part(t(lang, 'detail.sources'), body(sources.map(s => plain(s)).join('  ')))
+
+  if (nonEmpty(n.supersededBy)) out.push(...wrapped(t(lang, 'detail.supersededBy', { id: n.supersededBy }), width, GUTTER, { dim: true }))
+  if (older.length > 0) out.push(...wrapped(t(lang, 'detail.supersedes', { ids: older.map(o => o.id).join(', ') }), width, GUTTER, { dim: true }))
+
+  if (tags.length > 0) part(t(lang, 'detail.tags'), body(tags.join(', ')))
 
   if (n.notes.length > 0) {
-    out.push([indent(2), S(t(lang, 'detail.notes'), { dim: true })])
+    const lines: Line[] = []
     for (const note of n.notes) {
-      const when = fmtDate(note.ts)
-      const head = [when, note.actor].filter(nonEmpty).join(' ')
-      const lines = wrap(plain(note.text), Math.max(1, width - 4 - strWidth(head) - 2))
-      lines.forEach((l, i) => {
-        out.push(i === 0 ? [indent(4), S(head, { dim: true }), S('  '), S(l)] : [indent(4 + strWidth(head) + 2), S(l)])
+      const head = [fmtDate(note.ts), note.actor].filter(nonEmpty).join(' ')
+      const text = wrap(plain(note.text), Math.max(1, bodyW - strWidth(head) - 2))
+      text.forEach((l, i) => {
+        lines.push(i === 0 ? [indent(bodyAt), S(head, { dim: true }), S('  '), S(l)] : [indent(bodyAt + strWidth(head) + 2), S(l)])
       })
     }
+    part(t(lang, 'detail.notes'), lines)
   }
   return out
 }
@@ -310,7 +438,7 @@ export function detailLines(a: DetailInput): Line[] {
 export function capLines(lines: readonly Line[], max: number): Line[] {
   if (max <= 0) return []
   if (lines.length <= max) return [...lines]
-  return [...lines.slice(0, max - 1), [indent(2), S('…', { dim: true })]]
+  return [...lines.slice(0, max - 1), [indent(GUTTER), S('…', { dim: true })]]
 }
 
 // ---------------------------------------------------------------- now
@@ -574,6 +702,8 @@ export type PaneInput = {
   statusInterval: number | null
   /** False on a surface with no text field (mobile). */
   canEdit: boolean
+  /** True when the pane has `rows` rows to itself (docked): the footer then stays on the last ones. */
+  pin?: boolean
 }
 
 export type Block =
@@ -600,6 +730,12 @@ export const EDIT_ROWS = 4
 const MIN_TREE = 4
 /** The line saying where a tree began is drawn from this many rows up; a smaller pane keeps the room for the tree. */
 export const ORIGIN_MIN_ROWS = 16
+/** A blank row sets the tree off from the header and the mainline from this many rows up (always, while a filter is on). */
+export const AIRY_MIN_ROWS = 20
+/** From this many rows up the header and the mainline have a blank row between them too. */
+export const AIRIER_MIN_ROWS = 28
+/** From this many rows up the detail has blank rows between its parts, when it still fits whole. */
+export const AIRY_DETAIL_ROWS = 26
 
 function emptyText(project: DtProject, lang: DtLang): string {
   if (project.configError !== null) return t(lang, 'pane.empty.config', { error: project.configError })
@@ -610,37 +746,42 @@ function emptyText(project: DtProject, lang: DtLang): string {
 export function layoutPane(i: PaneInput): PaneLayout {
   const width = Math.max(16, Math.floor(i.width))
   const rows = Math.max(3, Math.floor(i.rows))
+  const inner = innerWidth(width)
   const { lang, ascii, project, model, ui } = i
   const blocks: Block[] = []
+  const text = (line: Line) => blocks.push({ kind: 'text', line: lead(line) })
+  const blank = () => blocks.push({ kind: 'text', line: [] })
+  const rule = () => blocks.push({ kind: 'rule', line: lead(ruleLine(inner, ascii)) })
 
   const titleText = project.config?.title ?? (project.root !== '' ? baseName(project.root) : '')
   const header = headerLine({
-    width,
+    width: inner,
     lang,
+    ascii,
     title: titleText,
     mode: project.mode,
     count: model.nodes.filter(n => n.retracted === undefined).length,
     lastEventAt: model.lastEventAt,
     ...(project.tree !== 'main' ? { tree: project.tree } : {}),
   })
-  blocks.push({ kind: 'text', line: header })
+  text(header)
 
   // not recording here: say how to start
   if (project.mode === 'off') {
-    blocks.push({ kind: 'rule', line: ruleLine(width, ascii) })
-    const message = wrapped(emptyText(project, lang), width, 0, { dim: project.configError === null })
-    for (const l of capLines(message, Math.max(1, rows - 2))) blocks.push({ kind: 'text', line: l })
+    blank()
+    const message = wrap(emptyText(project, lang), inner).map((l): Line => [S(l, { dim: project.configError === null })])
+    for (const l of capLines(message.map(lead), Math.max(1, rows - 2))) blocks.push({ kind: 'text', line: l })
     return { blocks, selected: null, drawn: [], height: blocks.length }
   }
 
   const idx = buildIndex(model)
-  const allRows = visibleRows(idx, { ui, nowMs: i.nowMs, ascii })
+  const allRows = visibleRows(idx, { ui, nowMs: i.nowMs })
   const sel = effectiveSelection(idx, allRows, ui.selected)
   const selIndex = rowIndex(allRows, sel)
   const selRow = selIndex >= 0 ? allRows[selIndex]! : null
 
   // pieces whose height is known before the tree gets what is left
-  const mainline = mainlineLine(trunkNodes(idx), { width, ascii, lang })
+  const mainline = mainlineLine(trunkNodes(idx), { width: inner, ascii, lang })
   const hasNow = i.statusInterval !== null
   const footerAll = footerItems({
     lang,
@@ -649,28 +790,33 @@ export function layoutPane(i: PaneInput): PaneLayout {
     hasNow,
     showNow: ui.showNow,
   })
-  const warn: FooterItem | null = {
-    kind: 'warn',
-    text: t(lang, 'pane.warnings', { n: model.warningCount }),
-    count: model.warningCount,
-  }
-  const footer = packFooter(footerAll, warn, width, rows >= 12 ? 2 : 1)
+  // no count to open when there are no warnings
+  const warn: FooterItem | null =
+    model.warningCount > 0 ? { kind: 'warn', text: t(lang, 'pane.warnings', { n: model.warningCount }), count: model.warningCount } : null
+  const footer = packFooter(footerAll, warn, inner, rows >= 12 ? 2 : 1)
 
   const editing = ui.editing !== null && selRow !== null && ui.editing.id === selRow.node.id ? ui.editing : null
-  const detailAll: Line[] =
-    selRow === null || editing !== null
-      ? []
-      : detailLines({ node: selRow.node, idx, width, ascii, lang, open: selRow.childCount === 0 ? null : selRow.isExpanded })
+  const detailCap = Math.max(3, Math.floor(rows * 0.45))
+  let detailAll: Line[] = []
+  if (selRow !== null && editing === null) {
+    const input = { node: selRow.node, idx, width: width - EDGE, ascii, lang, open: selRow.childCount === 0 ? null : selRow.isExpanded }
+    // blank rows between the parts, when the whole detail still fits with them
+    const airy = rows >= AIRY_DETAIL_ROWS ? detailLines({ ...input, roomy: true }) : []
+    detailAll = airy.length > 0 && airy.length <= detailCap ? airy : detailLines(input)
+  }
 
   const nowAll: NowBlock =
-    hasNow && ui.showNow ? nowBlock({ now: i.now, intervalSec: i.statusInterval ?? 30, nowMs: i.nowMs, width, ascii, lang }) : { lines: [], needsApproval: false, argv: [] }
+    hasNow && ui.showNow ? nowBlock({ now: i.now, intervalSec: i.statusInterval ?? 30, nowMs: i.nowMs, width: inner, ascii, lang }) : { lines: [], needsApproval: false, argv: [] }
 
   // where this tree began: when it is not the main one and the pane is not cramped
-  const origin = project.tree !== 'main' && model.fork !== null && rows >= ORIGIN_MIN_ROWS ? originLine(model.fork, { width, lang }) : null
+  const origin = project.tree !== 'main' && model.fork !== null && rows >= ORIGIN_MIN_ROWS ? originLine(model.fork, { width: inner, lang }) : null
+  // a row between what the pane is about and the tree; it says which filter is on
+  const chip = ui.filter === 'default' ? '' : filterLabel(ui.filter, lang)
+  const airy = chip !== '' || rows >= AIRY_MIN_ROWS
+  const airier = mainline !== null && rows >= AIRIER_MIN_ROWS
 
   // ---- the vertical budget
-  const mainRows = mainline === null ? 0 : 2 // the rule above it and the line itself
-  const base = 1 /* header */ + (origin === null ? 0 : 1) + mainRows + 1 /* rule above the tree */ + 1 /* rule above the footer */ + footer.length
+  const base = 1 /* header */ + (origin === null ? 0 : 1) + (airier ? 1 : 0) + (mainline === null ? 0 : 1) + (airy ? 1 : 0) + 1 /* rule above the footer */ + footer.length
   const nowCap = Math.max(3, Math.floor(rows * 0.35))
   // a command waiting for approval is never cut: the person reads all of it or is not asked
   let nowLines = nowAll.needsApproval ? nowAll.lines : capLines(nowAll.lines, nowCap)
@@ -679,7 +825,6 @@ export function layoutPane(i: PaneInput): PaneLayout {
   let nowCost = nowCostOf()
 
   const hasDetail = selRow !== null && (editing !== null || detailAll.length > 0)
-  const detailCap = Math.max(3, Math.floor(rows * 0.45))
   let detailRows = editing !== null ? EDIT_ROWS : Math.min(detailAll.length, detailCap)
   const detailCost = () => (hasDetail && detailRows > 0 ? 1 + detailRows : 0)
 
@@ -696,7 +841,7 @@ export function layoutPane(i: PaneInput): PaneLayout {
     if (treeRows < MIN_TREE) {
       allow = false
       resizeNotice = true
-      nowLines = [truncateSpans([S(t(lang, 'pane.now'), { bold: true }), S('  '), S(t(lang, 'now.resize'), { color: 'warning' })], width)]
+      nowLines = [truncateSpans([S(t(lang, 'pane.now'), { bold: true }), S('  '), S(t(lang, 'now.resize'), { color: 'warning' })], inner)]
       nowCost = nowCostOf()
       treeRows = rows - base - nowCost - detailCost()
     }
@@ -720,24 +865,26 @@ export function layoutPane(i: PaneInput): PaneLayout {
   if (treeRows < 1) treeRows = 1
 
   // ---- blocks above the tree
-  if (origin !== null) blocks.push({ kind: 'text', line: origin })
+  if (origin !== null) text(origin)
+  if (airier) blank()
+  if (mainline !== null) text(mainline)
   if (nowCost > 0) {
-    blocks.push({ kind: 'rule', line: ruleLine(width, ascii) })
-    for (const l of nowLines) blocks.push({ kind: 'text', line: l })
+    rule()
+    for (const l of nowLines) text(l)
     if (allow) blocks.push({ kind: 'allow', label: t(lang, 'now.allow'), argv: nowAll.argv })
   }
-  if (mainline !== null) {
-    blocks.push({ kind: 'rule', line: ruleLine(width, ascii) })
-    blocks.push({ kind: 'text', line: mainline })
+  if (airy) {
+    if (chip !== '') text([S(chip, { color: 'suggestion' })])
+    else blank()
   }
-  blocks.push({ kind: 'rule', line: ruleLine(width, ascii, filterLabel(ui.filter, lang)) })
 
   // ---- the tree window
   const drawn: string[] = []
   if (allRows.length === 0) {
-    const text = model.nodes.length === 0 ? t(lang, 'pane.noNodes') : t(lang, 'pane.noMatch')
-    for (const l of wrapped(text, width, 2, { dim: true }).slice(0, Math.max(1, treeRows))) blocks.push({ kind: 'text', line: l })
+    const message = model.nodes.length === 0 ? t(lang, 'pane.noNodes') : t(lang, 'pane.noMatch')
+    for (const l of wrap(message, inner).slice(0, Math.max(1, treeRows))) text([S(l, { dim: true })])
   } else {
+    const plan = indentPlan(allRows, width)
     const marks = treeRows >= 5 // page rows only when they leave a useful window
     let count = treeRows
     let win = windowRows(allRows.length, selIndex, null, count)
@@ -749,37 +896,39 @@ export function layoutPane(i: PaneInput): PaneLayout {
     }
     const mark = (up: boolean) => (ascii ? (up ? '^' : 'v') : up ? '▲' : '▼')
     if (marks && win.above > 0) {
-      const text = t(lang, 'pane.above', { n: win.above }).replace('▲', mark(true))
-      blocks.push({ kind: 'page', dir: 'up', step: count, line: [indent(GUTTER), S(text, { dim: true })] })
+      const message = t(lang, 'pane.above', { n: win.above }).replace('▲', mark(true))
+      blocks.push({ kind: 'page', dir: 'up', step: count, line: lead([S(message, { dim: true })]) })
     }
     for (let k = win.start; k < win.end; k++) {
       const row = allRows[k]!
       const selected = k === selIndex
       drawn.push(row.node.id)
-      blocks.push({ kind: 'row', id: row.node.id, selected, line: treeRowLine(row, { width, selected, ascii, lang }) })
+      blocks.push({ kind: 'row', id: row.node.id, selected, line: treeRowLine(row, { width, selected, ascii, lang, step: plan.step, cap: plan.cap }) })
     }
     if (marks && win.below > 0) {
-      const text = t(lang, 'pane.below', { n: win.below }).replace('▼', mark(false))
-      blocks.push({ kind: 'page', dir: 'down', step: count, line: [indent(GUTTER), S(text, { dim: true })] })
+      const message = t(lang, 'pane.below', { n: win.below }).replace('▼', mark(false))
+      blocks.push({ kind: 'page', dir: 'down', step: count, line: lead([S(message, { dim: true })]) })
     }
   }
 
   // ---- the detail (or the edit form)
   if (hasDetail && detailRows > 0 && selRow !== null) {
-    blocks.push({ kind: 'rule', line: ruleLine(width, ascii) })
+    rule()
     if (editing !== null) {
-      const title = truncateSpans([S(t(lang, 'edit.title', { id: selRow.node.id }), { bold: true })], width)
-      blocks.push({ kind: 'edit', id: selRow.node.id, title })
+      const title = truncateSpans([S(t(lang, 'edit.title', { id: selRow.node.id }), { bold: true })], inner)
+      blocks.push({ kind: 'edit', id: selRow.node.id, title: lead(title) })
     } else {
       for (const l of capLines(detailAll, detailRows)) blocks.push({ kind: 'text', line: l })
     }
   }
 
-  // ---- the footer
-  blocks.push({ kind: 'rule', line: ruleLine(width, ascii) })
+  // ---- the footer, on the last rows when the pane is all the person's to use
+  const heightOf = (bs: readonly Block[]) => bs.reduce((sum, b) => sum + (b.kind === 'edit' ? EDIT_ROWS : 1), 0)
+  if (i.pin === true) for (let k = rows - heightOf(blocks) - 1 - footer.length; k > 0; k--) blank()
+  rule()
   for (const line of footer) blocks.push({ kind: 'footer', line })
 
-  return { blocks, selected: sel, drawn, height: blocks.reduce((sum, b) => sum + (b.kind === 'edit' ? EDIT_ROWS : 1), 0) }
+  return { blocks, selected: sel, drawn, height: heightOf(blocks) }
 }
 
 /** Everything in a layout that is plain text, for tests: a block's text, or null for controls. */
@@ -791,12 +940,12 @@ export function blockWidth(b: Block): number {
     case 'page':
       return lineWidth(b.line)
     case 'allow':
-      return strWidth(b.label) + 4
+      return GUTTER + strWidth(b.label) + 4
     case 'edit':
       return lineWidth(b.title)
     case 'footer': {
       const l = b.line
-      let w = 0
+      let w = GUTTER
       l.items.forEach((it, k) => {
         w += itemWidth(it) + (k > 0 ? FOOTER_GAP : 0)
       })
