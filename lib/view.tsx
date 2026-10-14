@@ -1,28 +1,30 @@
-// What the pane looks like: the layout's blocks turned into elements. All the
-// measuring is in layout.ts; here every block becomes a row of Text and Button,
-// and every press is handed to the Runtime.
+// What the pane looks like: the layout's blocks turned into elements. All the measuring is in layout.ts;
+// here every block becomes a row of Text and Button, every colour goes through the colour scheme, and
+// every press is handed to the Runtime.
 //
-// Keys: a node's row is a Button keyed by the node's id; every other control
-// has a key starting with `~`, which no id can (ids are lowercase letters,
-// digits and hyphens).
+// Keys: a node's row is a Button keyed by the node's id; every other control has a key starting with
+// `~`, which no id can (ids are lowercase letters, digits and hyphens).
 
 import type { ElementTable, RenderElement, RenderInput } from 'claude-code'
 
 import type { DtStatus } from '../types'
+import type { Action, Part } from './bar'
+import { CONTROL, NEW_KEYS, schemeKey, stepKey, treeKey } from './bar'
 import { STATUSES } from './events'
 import { glyphOf } from './glyphs'
 import { statusLabel, t } from './i18n'
 import type { Dollar } from './io'
-import { GUTTER, layoutPane } from './layout'
-import type { Block, FooterAction, FooterItem, FooterLine } from './layout'
+import { layoutPane } from './layout'
+import type { Block } from './layout'
+import { GUTTER, QUIET, S } from './style'
+import { effectiveScheme, paintFor, schemeOf } from './palettes'
 import type { Runtime } from './runtime'
 import { lineText } from './spans'
 import type { Line, Span } from './spans'
 
 export type PaneEvent = RenderInput<'Pane'>
 
-/** Control keys start with this; a node's key is its id. */
-export const CONTROL = '~'
+export { CONTROL }
 
 export function isNodeKey(key: string): boolean {
   return key !== '' && !key.startsWith(CONTROL)
@@ -32,17 +34,7 @@ export function isNodeKey(key: string): boolean {
 const INLINE_ROWS = 16
 const MIN_ROWS = 6
 
-type Style = { color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean; inverse?: boolean }
-
-function styleOf(s: Span): Style {
-  const out: Style = {}
-  if (s.color !== undefined) out.color = s.color
-  if (s.bg !== undefined) out.backgroundColor = s.bg
-  if (s.dim === true) out.dimColor = true
-  if (s.bold === true) out.bold = true
-  if (s.inverse === true) out.inverse = true
-  return out
-}
+type Style = { color?: string; backgroundColor?: string; dimColor?: boolean; bold?: boolean; underline?: boolean; inverse?: boolean }
 
 /** A press handler that never lets a failure escape into the engine. */
 function run(fn: () => Promise<unknown>): () => void {
@@ -66,15 +58,23 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
   const Select = hasFields ? els.Select : null
   const canEdit = Input !== null && Select !== null
 
-  const [model, ui, project, now, lang] = await Promise.all([
+  const [model, ui, project, now, lang, tm, trees, schemeId, translating] = await Promise.all([
     $.state.model.read(),
     $.state.ui.read(),
     $.state.project.read(),
     $.state.now.read(),
     $.state.lang.read(),
+    $.state.tm.read(),
+    $.state.trees.read(),
+    $.state.scheme.read(),
+    $.state.translating.read(),
   ])
   const ascii = project.config?.display.asciiGlyphs === true
   if (project.root === '') rt.repairSoon($) // the session's state was wiped (a /clear): put it back once this drawing is over
+
+  // the accent colours the layout names are the theme's; the scheme in use turns them into its own. While the picker
+  // of colours is open the pane is drawn in the scheme highlighted there: moving the highlight tries a scheme on.
+  const paint = paintFor(effectiveScheme(schemeOf(ui.view === 'colors' && ui.pick !== null ? ui.pick : schemeId), e.surface))
 
   const bodyRows = e.props.scroll.bodyRows
   const rows = Math.max(MIN_ROWS, e.props.placement === 'inline' ? Math.min(bodyRows, INLINE_ROWS) : bodyRows)
@@ -88,12 +88,30 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
     model,
     ui,
     now,
+    tm,
+    trees,
+    translating,
     statusInterval: project.config?.status?.intervalSec ?? null,
     canEdit,
     pin: e.props.placement !== 'inline',
+    scheme: schemeId,
+    surface: e.surface,
   })
 
   // ---- pieces of a line
+
+  const styleOf = (s: Span): Style => {
+    const out: Style = {}
+    const color = s.fixed === true ? s.color : paint(s.color)
+    const bg = s.fixed === true ? s.bg : paint(s.bg)
+    if (color !== undefined) out.color = color
+    if (bg !== undefined) out.backgroundColor = bg
+    if (s.dim === true) out.dimColor = true
+    if (s.bold === true) out.bold = true
+    if (s.underline === true) out.underline = true
+    if (s.inverse === true) out.inverse = true
+    return out
+  }
 
   const piece = (s: Span) => {
     const style = styleOf(s)
@@ -108,49 +126,63 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
     return <Text wrap="truncate-end">{kids.length === 0 ? ' ' : kids}</Text>
   }
 
-  // ---- the footer
+  // ---- what a press asks for
 
-  const actions: Record<FooterAction, () => Promise<unknown>> = {
-    up: () => rt.move($, -1),
-    down: () => rt.move($, 1),
-    all: () => rt.setFilter($, 'all'),
-    pending: () => rt.setFilter($, 'pending'),
-    clean: () => rt.setFilter($, 'clean'),
-    now: () => rt.toggleNow($),
-    edit: () => rt.startEdit($),
-  }
-
-  const itemEl = (item: FooterItem): RenderElement => {
-    switch (item.kind) {
-      case 'text':
-        return <Text dimColor>{item.text}</Text>
-      case 'key':
-        return (
-          <Button key={CONTROL + item.action} hotkey={item.hotkey} plain onPress={run(actions[item.action])}>
-            {item.active ? <Text bold>{item.label}</Text> : item.label}
-          </Button>
-        )
-      case 'warn':
-        return (
-          <Button key={CONTROL + 'warnings'} plain dimColor={item.count === 0} onPress={run(() => rt.showWarnings($))}>
-            {item.count > 0 ? <Text color="warning">{item.text}</Text> : item.text}
-          </Button>
-        )
+  const actionOf = (a: Action): (() => Promise<unknown>) => {
+    switch (a.do) {
+      case 'move':
+        return () => rt.move($, a.by)
+      case 'filter':
+        return () => rt.setFilter($, a.filter)
+      case 'now':
+        return () => rt.toggleNow($)
+      case 'edit':
+        return () => rt.startEdit($)
+      case 'warnings':
+        return () => rt.showWarnings($)
+      case 'lang':
+        return () => rt.setLang($, a.lang)
+      case 'tab':
+        return () => rt.showTree($, a.tree)
+      case 'cycle':
+        return () => rt.cycleTree($, a.by)
+      case 'overview':
+        return () => rt.openOverview($)
+      case 'back':
+        return () => rt.back($)
+      case 'open':
+        return () => rt.openPicked($)
+      case 'record':
+        return () => rt.recordPicked($)
+      case 'new':
+        return () => rt.openNewTree($)
+      case 'colors':
+        return () => rt.openColors($)
+      case 'use':
+        return () => rt.useHighlighted($)
+      case 'reset':
+        return () => rt.resetColors($)
     }
   }
 
-  const footerEl = (line: FooterLine): RenderElement => {
-    const parts: RenderElement[] = [<Text>{' '.repeat(GUTTER)}</Text>]
-    line.items.forEach((item, k) => {
-      if (k > 0) parts.push(<Text>{'  '}</Text>)
-      parts.push(itemEl(item))
-    })
-    if (line.warn !== null) {
-      parts.push(<Text>{' '.repeat(line.pad)}</Text>)
-      parts.push(itemEl(line.warn))
+  // ---- a row of buttons and words (the strip, the keys)
+
+  const partEl = (p: Part): RenderElement | null => {
+    if (p.kind === 'text') {
+      const kids = pieces(p.spans)
+      return kids.length === 0 ? null : <Text>{kids}</Text>
     }
-    return <Box flexDirection="row">{parts}</Box>
+    const kids = pieces(p.spans)
+    return (
+      <Button key={p.key} {...(p.hotkey !== null ? { hotkey: p.hotkey } : {})} plain {...(p.dim ? { dimColor: true } : {})} onPress={run(actionOf(p.action))}>
+        {kids}
+      </Button>
+    )
   }
+
+  const barEl = (parts: readonly Part[]): RenderElement => (
+    <Box flexDirection="row">{parts.map(partEl).filter((x): x is RenderElement => x !== null)}</Box>
+  )
 
   // ---- the edit form
 
@@ -214,6 +246,66 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
     )
   }
 
+  // ---- the form for a new tree
+
+  const newTreeEl = (b: Extract<Block, { kind: 'newtree' }>): RenderElement => {
+    const form = ui.newTree
+    if (form === null) return lineEl(b.title)
+    const cancel = (
+      <Button key={NEW_KEYS.cancel} onPress={run(() => rt.cancelNewTree($))}>
+        {t(lang, 'edit.cancel')}
+      </Button>
+    )
+    if (Input === null) {
+      return (
+        <Box flexDirection="column">
+          {lineEl(b.title)}
+          <Box flexDirection="column" paddingLeft={GUTTER}>
+            <Text dimColor wrap="truncate-end">
+              {t(lang, 'trees.new.mobile')}
+            </Text>
+            {cancel}
+          </Box>
+        </Box>
+      )
+    }
+    const field = (key: string, name: 'name' | 'at' | 'title', label: string, hint: string, autoFocus: boolean) => (
+      <Input
+        key={key}
+        label={label}
+        placeholder={hint}
+        value={form[name]}
+        {...(autoFocus ? { autoFocus: true as const } : {})}
+        onInput={value => {
+          void rt.newTreeField($, name, value).catch(() => undefined)
+        }}
+        onSubmit={value => {
+          void rt.createTree($, { [name]: value }).catch(() => undefined)
+        }}
+      />
+    )
+    // what went wrong, else what the tree will be
+    const note: Line = form.error !== null ? [S(form.error, { color: 'error' })] : [S(t(lang, 'trees.new.recording'), QUIET)]
+    return (
+      <Box flexDirection="column">
+        {lineEl(b.title)}
+        <Box flexDirection="column" paddingLeft={GUTTER}>
+          {field(NEW_KEYS.name, 'name', t(lang, 'trees.new.name'), t(lang, 'trees.new.nameHint'), true)}
+          {field(NEW_KEYS.at, 'at', t(lang, 'trees.new.at'), t(lang, 'trees.new.atHint'), false)}
+          {field(NEW_KEYS.title, 'title', t(lang, 'trees.new.label'), t(lang, 'trees.new.labelHint'), false)}
+          {lineEl(note)}
+          <Box flexDirection="row">
+            <Button key={NEW_KEYS.create} variant="primary" onPress={run(() => rt.createTree($))}>
+              {t(lang, 'trees.new.create')}
+            </Button>
+            <Text>{'  '}</Text>
+            {cancel}
+          </Box>
+        </Box>
+      </Box>
+    )
+  }
+
   // ---- one block
 
   const blockEl = (b: Block): RenderElement => {
@@ -233,18 +325,34 @@ export async function drawPane($: Dollar, e: PaneEvent, els: ElementTable, rt: R
             {lineText(b.line)}
           </Button>
         )
+      case 'bar':
+        return barEl(b.parts)
       case 'allow':
         return (
-          <Box paddingLeft={GUTTER}>
+          <Box flexDirection="row">
+            <Text>{pieces(b.left)}</Text>
             <Button key={CONTROL + 'allow'} variant="primary" onPress={run(() => rt.approveStatus($, b.argv))}>
               {b.label}
             </Button>
+            <Text>{pieces(b.right)}</Text>
           </Box>
         )
       case 'edit':
         return editEl(b)
-      case 'footer':
-        return footerEl(b.line)
+      case 'tree':
+        return (
+          <Button key={b.step !== null ? stepKey(b.tree, b.step) : treeKey(b.tree, b.part)} label={b.label} plain onPress={run(() => rt.pressTree($, b.tree, b.step))}>
+            {pieces(b.line)}
+          </Button>
+        )
+      case 'newtree':
+        return newTreeEl(b)
+      case 'scheme':
+        return (
+          <Button key={schemeKey(b.id)} label={b.label} plain onPress={run(() => rt.pressScheme($, b.id))}>
+            {pieces(b.line)}
+          </Button>
+        )
     }
   }
 

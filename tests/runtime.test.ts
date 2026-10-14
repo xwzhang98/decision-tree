@@ -13,7 +13,7 @@ async function boot(engine = new FakeEngine(), session = 'abcdef0123456789') {
 
 async function started(title = 'orders') {
   const b = await boot()
-  const answer = await b.rt.toolCall(b.p, 'decision_log_start', { title, rootTitle: 'design v2 定稿' })
+  const answer = await b.rt.toolCall(b.p, 'decision_log_start', { title, rootTitle: 'notes app 立项' })
   return { ...b, answer }
 }
 
@@ -44,13 +44,13 @@ test('off: the other tools are denied with the way to turn recording on', async 
 
 test('start (model): writes config and events, registers the other tools, opens the pane unfocused', async () => {
   const { rt, engine, answer } = await started()
-  expect(text(answer)).toBe('Started recording decisions for orders, root design-v2')
+  expect(text(answer)).toBe('Started recording decisions for orders, root notes-app')
   expect(rt.mode).toBe('recording')
   expect(engine.tools.map(t => t.name).sort()).toEqual(['decision_log_start', 'decision_new_tree', 'decision_note', 'decision_record', 'decision_tree', 'decision_update', 'decision_use_tree'])
   const cfg = JSON.parse(engine.disk.text(configPath()))
   expect(cfg).toMatchObject({ v: 1, title: 'orders', recording: true })
   expect(eventsOf(engine).map(e => e.op)).toEqual(['start', 'add'])
-  expect(eventsOf(engine)[1]).toMatchObject({ id: 'design-v2', actor: 'model', node: { title: 'design v2 定稿', trunk: true, status: 'adopted' } })
+  expect(eventsOf(engine)[1]).toMatchObject({ id: 'notes-app', actor: 'model', node: { title: 'notes app 立项', trunk: true, status: 'adopted' } })
   // tree.json is a derived snapshot
   const tree = JSON.parse(engine.disk.text(`${ROOT}/.claude/decisions/tree.json`))
   expect(tree.project).toBe('orders')
@@ -96,16 +96,16 @@ test('start: a title is required, and a broken config.json is not overwritten', 
 test('record: one event per call, a one-line receipt, and the pane state moves', async () => {
   const { rt, engine, p } = await started()
   const r = await rt.toolCall(p, 'decision_record', {
-    title: 'dbpool adopted',
-    parent: 'design-v2',
+    title: 'sqlite adopted',
+    parent: 'notes-app',
     status: 'adopted',
-    summary: 'P99 suite -12.6%',
-    evidence: [{ label: 'v22 s0', value: '-12.6%', ci: '[-15.1, -10.4]', run: 'v22_s0' }],
+    summary: 'cold start -17.4%',
+    evidence: [{ label: 'bench s0', value: '-17.4%', ci: '[-19.8, -15.3]', run: 'bench_s0' }],
   })
-  expect(text(r)).toBe('Recorded dbpool-adopted (under design-v2, Adopted)')
+  expect(text(r)).toBe('Recorded sqlite-adopted (under notes-app, adopted)')
   expect(eventFiles(engine)).toHaveLength(3)
-  expect(engine.cells.model.nodes.map(n => n.id).sort()).toEqual(['dbpool-adopted', 'design-v2'])
-  expect(engine.cells.model.nodes.find(n => n.id === 'dbpool-adopted')).toMatchObject({ createdBy: 'model', evidence: [{ label: 'v22 s0', run: 'v22_s0' }] })
+  expect(engine.cells.model.nodes.map(n => n.id).sort()).toEqual(['notes-app', 'sqlite-adopted'])
+  expect(engine.cells.model.nodes.find(n => n.id === 'sqlite-adopted')).toMatchObject({ createdBy: 'model', evidence: [{ label: 'bench s0', run: 'bench_s0' }] })
   const tree = JSON.parse(engine.disk.text(`${ROOT}/.claude/decisions/tree.json`))
   expect(tree.nodes).toHaveLength(2)
 })
@@ -113,7 +113,7 @@ test('record: one event per call, a one-line receipt, and the pane state moves',
 test('record: a bad call is denied with something the model can act on, and writes nothing', async () => {
   const { rt, engine, p } = await started()
   const before = eventFiles(engine).length
-  const noStatus = await rt.toolCall(p, 'decision_record', { title: 'x', parent: 'design-v2', status: 'good' })
+  const noStatus = await rt.toolCall(p, 'decision_record', { title: 'x', parent: 'notes-app', status: 'good' })
   expect('deny' in noStatus && noStatus.deny).toContain('status')
   const noParent = await rt.toolCall(p, 'decision_record', { title: 'x', parent: 'nowhere', status: 'adopted' })
   expect('deny' in noParent && noParent.deny).toContain('decision_tree')
@@ -122,25 +122,25 @@ test('record: a bad call is denied with something the model can act on, and writ
 
 test('update and note: a change event each, a receipt each', async () => {
   const { rt, engine, p } = await started()
-  await rt.toolCall(p, 'decision_record', { title: 'dbpool adopted', parent: 'design-v2', status: 'proposed' })
-  const u = await rt.toolCall(p, 'decision_update', { id: 'dbpool-adopted', status: 'adopted', summary: 'confirmed' })
-  expect(text(u)).toBe('Updated dbpool-adopted: status Adopted, summary')
-  const n = await rt.toolCall(p, 'decision_note', { id: 'dbpool-adopted', text: 'seed 2 agrees' })
-  expect(text(n)).toBe('Noted on dbpool-adopted')
-  const node = engine.cells.model.nodes.find(x => x.id === 'dbpool-adopted')
+  await rt.toolCall(p, 'decision_record', { title: 'sqlite adopted', parent: 'notes-app', status: 'proposed' })
+  const u = await rt.toolCall(p, 'decision_update', { id: 'sqlite-adopted', status: 'adopted', summary: 'confirmed' })
+  expect(text(u)).toBe('Updated sqlite-adopted: status adopted, summary')
+  const n = await rt.toolCall(p, 'decision_note', { id: 'sqlite-adopted', text: 'run 2 agrees' })
+  expect(text(n)).toBe('Noted on sqlite-adopted')
+  const node = engine.cells.model.nodes.find(x => x.id === 'sqlite-adopted')
   expect(node).toMatchObject({ status: 'adopted', summary: 'confirmed' })
-  expect(node?.notes.map(x => x.text)).toEqual(['seed 2 agrees'])
+  expect(node?.notes.map(x => x.text)).toEqual(['run 2 agrees'])
   expect(eventsOf(engine).slice(-2).map(e => e.op)).toEqual(['update', 'note'])
 })
 
 test('decision_tree: the mainline and the latest nodes, or one node in detail', async () => {
   const { rt, p } = await started()
-  await rt.toolCall(p, 'decision_record', { title: 'dbpool adopted', parent: 'design-v2', status: 'adopted', summary: 'P99 -12.6%' })
+  await rt.toolCall(p, 'decision_record', { title: 'sqlite adopted', parent: 'notes-app', status: 'adopted', summary: 'cold start -17.4%' })
   const all = text(await rt.toolCall(p, 'decision_tree', {}))
-  expect(all).toContain('design-v2')
-  expect(all).toContain('dbpool-adopted')
-  const one = text(await rt.toolCall(p, 'decision_tree', { id: 'dbpool-adopted' }))
-  expect(one).toContain('P99 -12.6%')
+  expect(all).toContain('notes-app')
+  expect(all).toContain('sqlite-adopted')
+  const one = text(await rt.toolCall(p, 'decision_tree', { id: 'sqlite-adopted' }))
+  expect(one).toContain('cold start -17.4%')
 })
 
 // ---------------------------------------------------------------- pause
@@ -150,7 +150,7 @@ test('pause: nothing is recorded, the prompt says so, and resume turns it back o
   expect(await rt.command(p, 'decide', 'pause')).toBe('Decision recording paused')
   expect(rt.mode).toBe('paused')
   expect(JSON.parse(engine.disk.text(configPath())).recording).toBe(false)
-  const r = await rt.toolCall(p, 'decision_record', { title: 'x', parent: 'design-v2', status: 'adopted' })
+  const r = await rt.toolCall(p, 'decision_record', { title: 'x', parent: 'notes-app', status: 'adopted' })
   expect(text(r)).toContain('paused')
   expect(eventFiles(engine)).toHaveLength(2)
   await rt.onTurnStart(p)
@@ -159,6 +159,6 @@ test('pause: nothing is recorded, the prompt says so, and resume turns it back o
 
   expect(await rt.command(p, 'decide', 'resume')).toBe('Decision recording resumed')
   expect(rt.mode).toBe('recording')
-  const again = await rt.toolCall(p, 'decision_record', { title: 'after resume', parent: 'design-v2', status: 'planned' })
+  const again = await rt.toolCall(p, 'decision_record', { title: 'after resume', parent: 'notes-app', status: 'planned' })
   expect(text(again)).toContain('Recorded')
 })

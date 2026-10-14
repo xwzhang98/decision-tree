@@ -2,11 +2,12 @@
 // MemDisk, time moves only when a test moves it, and every registration, pane
 // call and toast is recorded so a test can say what the mod asked for.
 
-import type { CommandSpec, FsEntry, PaneOpenArgs, ProcessRunInit, ProcessRunResult, ToolSpec, UiPane } from 'claude-code'
+import type { CommandSpec, FsEntry, ModelCompleteRequest, ModelCompleteResult, PaneOpenArgs, ProcessRunInit, ProcessRunResult, ToolSpec, UiPane } from 'claude-code'
 
-import type { DtLang, DtModel, DtNow, DtProject, DtUi } from '../types'
+import type { DtLang, DtModel, DtNow, DtProject, DtTm, DtTreeInfo, DtUi } from '../types'
 import type { Cell, Port } from '../lib/port'
-import { EMPTY_MODEL, EMPTY_NOW, EMPTY_PROJECT, EMPTY_UI } from '../lib/state'
+import { DEFAULT_SCHEME } from '../lib/palettes'
+import { EMPTY_MODEL, EMPTY_NOW, EMPTY_PROJECT, EMPTY_TM, EMPTY_TREES, EMPTY_UI } from '../lib/state'
 import { MemDisk } from './mem'
 
 export const ROOT = '/work/proj'
@@ -15,6 +16,17 @@ export const T0 = Date.UTC(2026, 9, 10, 12, 0, 0, 0)
 type Timer = { ms: number; fn: () => void; cancelled: boolean; due: number }
 
 export type RunHandler = (argv: readonly string[], init?: ProcessRunInit) => ProcessRunResult | Promise<ProcessRunResult>
+
+/** What a call to the model answers when no test said otherwise: no model to be had (the translator backs off). */
+export const NO_MODEL: ModelCompleteResult = {
+  isAnswered: false,
+  reason: 'api-error',
+  status: null,
+  error: 'unknown',
+  usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+}
+
+export type ModelHandler = (request: ModelCompleteRequest) => ModelCompleteResult | Promise<ModelCompleteResult>
 
 function result(exitCode: number, stdout = '', stderr = ''): ProcessRunResult {
   return { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } as ProcessRunResult
@@ -46,6 +58,12 @@ export class FakeEngine {
   shown = true
   paneOpen = false
 
+  // ---- the model (what the translator asks for)
+  /** Every request the mod made to `$.model.complete`, in order. */
+  readonly modelCalls: ModelCompleteRequest[] = []
+  /** What `$.model.complete` answers; null is no model at all (`NO_MODEL`). */
+  onModel: ModelHandler | null = null
+
   // ---- processes
   readonly runs: { argv: readonly string[]; init?: ProcessRunInit }[] = []
   /** `git rev-parse --show-toplevel` answers this; null is "not a repository". */
@@ -56,12 +74,16 @@ export class FakeEngine {
   onRun: RunHandler | null = null
 
   // ---- state cells
-  cells: { model: DtModel; project: DtProject; ui: DtUi; lang: DtLang; now: DtNow; owner: string } = {
+  cells: { model: DtModel; project: DtProject; ui: DtUi; lang: DtLang; now: DtNow; tm: DtTm; trees: DtTreeInfo[]; scheme: string; translating: number; owner: string } = {
     model: EMPTY_MODEL,
     project: EMPTY_PROJECT,
     ui: EMPTY_UI,
     lang: 'en',
     now: EMPTY_NOW,
+    tm: EMPTY_TM,
+    trees: EMPTY_TREES,
+    scheme: DEFAULT_SCHEME,
+    translating: 0,
     owner: '',
   }
   /** Every write to a cell, in order (to count redraws). */
@@ -195,6 +217,12 @@ export class FakeEngine {
           return { text: input.text }
         },
       },
+      model: {
+        complete: async request => {
+          self.modelCalls.push(request)
+          return self.onModel === null ? NO_MODEL : self.onModel(request)
+        },
+      },
       tool: {
         register: async spec => {
           const at = self.tools.findIndex(t => t.name === spec.name)
@@ -228,6 +256,10 @@ export class FakeEngine {
         ui: this.cell('ui'),
         lang: this.cell('lang'),
         now: this.cell('now'),
+        tm: this.cell('tm'),
+        trees: this.cell('trees'),
+        scheme: this.cell('scheme'),
+        translating: this.cell('translating'),
         owner: this.cell('owner'),
       },
     }

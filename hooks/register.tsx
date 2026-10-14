@@ -12,7 +12,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Port } from '../lib/port'
 import { PANE_ID, Runtime } from '../lib/runtime'
-import { EMPTY_MODEL, EMPTY_NOW, EMPTY_PROJECT, EMPTY_UI } from '../lib/state'
+import { EMPTY_MODEL, EMPTY_NOW, EMPTY_PROJECT, EMPTY_TM, EMPTY_TREES, EMPTY_UI } from '../lib/state'
+import { DEFAULT_SCHEME } from '../lib/palettes'
 import { TOOL_PREFIX, shortName } from '../lib/tools'
 import { drawPane, isNodeKey } from '../lib/view'
 
@@ -28,6 +29,10 @@ const projectAtom = atom({ plugin: 'decision-tree', key: 'project' } as const, E
 const uiAtom = atom({ plugin: 'decision-tree', key: 'ui' } as const, EMPTY_UI)
 const langAtom = atom({ plugin: 'decision-tree', key: 'lang' } as const, 'en' as const)
 const nowAtom = atom({ plugin: 'decision-tree', key: 'now' } as const, EMPTY_NOW)
+const tmAtom = atom({ plugin: 'decision-tree', key: 'tm' } as const, EMPTY_TM)
+const treesAtom = atom({ plugin: 'decision-tree', key: 'trees' } as const, EMPTY_TREES)
+const schemeAtom = atom({ plugin: 'decision-tree', key: 'scheme' } as const, DEFAULT_SCHEME)
+const translatingAtom = atom({ plugin: 'decision-tree', key: 'translating' } as const, 0)
 const ownerAtom = atom({ plugin: 'decision-tree', key: 'owner' } as const, '')
 
 function portOf($: EngineInterface): Port {
@@ -45,6 +50,7 @@ function portOf($: EngineInterface): Port {
     command: { register: spec => $.command.register(spec) },
     prompt: { submit: input => $.prompt.submit(input) },
     tool: { register: spec => $.tool.register(spec) },
+    model: { complete: (request, options) => $.model.complete(request, options) },
     ui: {
       open: args => $.ui.open(args),
       panes: () => $.ui.panes(),
@@ -58,6 +64,10 @@ function portOf($: EngineInterface): Port {
       ui: { read: () => read($, uiAtom), update: change => update($, uiAtom, change) },
       lang: { read: () => read($, langAtom), update: change => update($, langAtom, change) },
       now: { read: () => read($, nowAtom), update: change => update($, nowAtom, change) },
+      tm: { read: () => read($, tmAtom), update: change => update($, tmAtom, change) },
+      trees: { read: () => read($, treesAtom), update: change => update($, treesAtom, change) },
+      scheme: { read: () => read($, schemeAtom), update: change => update($, schemeAtom, change) },
+      translating: { read: () => read($, translatingAtom), update: change => update($, translatingAtom, change) },
       owner: { read: () => read($, ownerAtom), update: change => update($, ownerAtom, change) },
     },
   }
@@ -77,8 +87,8 @@ export const register: Register = on => {
     await $.command.register({ name: 'tree', description: 'Open the decision tree pane', immediate: true })
     await $.command.register({
       name: 'decide',
-      description: 'Record and edit decisions: init, start, pause, resume, status, note, add, retract, import, tree',
-      argumentHint: '[init|start|pause|resume|status|note|add|retract|import|tree] ...',
+      description: 'Record and edit decisions: init, start, pause, resume, status, note, add, retract, import, tree, lang, translate, colors',
+      argumentHint: '[init|start|pause|resume|status|note|add|retract|import|tree|lang|translate|colors] ...',
       immediate: true,
     })
     try {
@@ -139,11 +149,12 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // the selected node follows the keyboard's focus ring (Tab, arrows, a click)
+  // the selected node follows the keyboard's focus ring (Tab, arrows, a click); so does the tree highlighted in the overview
   on('ui.focus', { requestId: PANE_ID }, async ($, e, next) => {
-    if (e.component === 'Pane' && e.plugin === $.plugin.name && e.element !== undefined && isNodeKey(e.element)) {
+    if (e.component === 'Pane' && e.plugin === $.plugin.name && e.element !== undefined) {
       try {
-        await rt.select(portOf($), e.element)
+        if (isNodeKey(e.element)) await rt.select(portOf($), e.element)
+        else await rt.focusedControl(portOf($), e.element)
       } catch {
         // the ring still moves
       }

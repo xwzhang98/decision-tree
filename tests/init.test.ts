@@ -165,7 +165,7 @@ test('/decide init in a tree opened with --empty fills that tree', async () => {
   await b.rt.command(b.p, 'decide', 'start orders')
   await b.rt.command(b.p, 'decide', 'add First idea --id first --status proposed')
   expect(await init(b)).toContain('already has decisions')
-  expect(await b.rt.command(b.p, 'decide', 'new sql-v3 --empty')).toContain('sql-v3')
+  expect(await b.rt.command(b.p, 'decide', 'new side-b --empty')).toContain('side-b')
   expect(await init(b)).toBe(ASKED)
   expect(b.engine.prompts).toHaveLength(1)
 })
@@ -201,7 +201,7 @@ test('/decide init: the refusals are worded in the language of the person', asyn
   await b.rt.command(b.p, 'decide', 'start orders')
   await b.rt.command(b.p, 'decide', 'add 第一个想法 --id first --status proposed')
   await b.rt.onPrompt(b.p, '帮我把这个项目的起点找出来')
-  expect(await init(b)).toBe('这棵树已经有决定了（1 个），init 只用于空树。/decide new <名字> --empty 可以新开一棵空树。')
+  expect(await init(b)).toBe('这棵 tree 已经有决定了（1 个），init 只用于空 tree。/decide new <name> --empty 可以新开一棵空 tree。')
   await b.rt.command(b.p, 'decide', 'pause')
   expect(await init(b)).toBe('决定记录已暂停，init 没有地方可写。先运行 /decide resume。')
 })
@@ -330,7 +330,7 @@ test('/decide init through the engine: the English job the mod sends itself does
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   const ui = await mountPane($, 'terminal', { columns: 80 })
   await submit($, '这个方向不错，先把项目的现状理一下，然后开始吧')
-  expect(linesOf(await ui.drawn()).join('\n')).toContain('决策树')
+  expect(linesOf(await ui.drawn()).join('\n')).toContain('个决定')
   expect(w.store.get(`lang:${ROOT}`)).toBe('zh')
 
   expect(said(await slash($, 'decide', 'init'))).toBe(ASKED_ZH)
@@ -339,12 +339,12 @@ test('/decide init through the engine: the English job the mod sends itself does
   expect(own).toHaveLength(1)
   expect(own[0]?.text.endsWith('in Chinese; technical terms stay in English.')).toBe(true)
   // (the engine does not hand a plugin's prompt to its own hooks, but the pane and the language are what they were)
-  expect(linesOf(await ui.drawn()).join('\n')).toContain('决策树')
+  expect(linesOf(await ui.drawn()).join('\n')).toContain('个决定')
   expect(w.store.get(`lang:${ROOT}`)).toBe('zh')
 
   // while something the person types still does
   await submit($, 'Please go on and look at the second package now')
-  expect(linesOf(await ui.drawn()).join('\n')).toContain('Decision tree')
+  expect(linesOf(await ui.drawn()).join('\n')).toContain('decision')
 })
 
 test('language through the engine: a prompt from another plugin, a schedule or a notification does not turn a Chinese pane English', async ($, on) => {
@@ -353,17 +353,17 @@ test('language through the engine: a prompt from another plugin, a schedule or a
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
   const ui = await mountPane($, 'terminal', { columns: 80 })
   await submit($, '这个方向不错，先把项目的现状理一下，然后开始吧')
-  expect(linesOf(await ui.drawn()).join('\n')).toContain('决策树')
+  expect(linesOf(await ui.drawn()).join('\n')).toContain('个决定')
 
   const english = 'Please run the nightly summary of the open pull requests and post it to the channel'
   await submitFrom($, english, { kind: 'plugin', name: 'some-other-plugin' })
   await submitFrom($, english, { kind: 'scheduled-trigger' })
   await submitFrom($, english, { kind: 'task-notification' })
-  expect(linesOf(await ui.drawn()).join('\n')).toContain('决策树')
+  expect(linesOf(await ui.drawn()).join('\n')).toContain('个决定')
   expect(w.store.get(`lang:${ROOT}`)).toBe('zh')
 
   // what the person types does
   await submit($, english)
-  expect(linesOf(await ui.drawn()).join('\n')).toContain('Decision tree')
+  expect(linesOf(await ui.drawn()).join('\n')).toContain('decision')
   expect(w.store.get(`lang:${ROOT}`)).toBe('en')
 })

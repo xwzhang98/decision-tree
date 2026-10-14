@@ -1,4 +1,4 @@
-// The system-prompt section (spec 7.3): one line when the project is not being
+// The system-prompt section: one line when the project is not being
 // recorded, one line when paused, and a short briefing when it is on.
 //
 // The text is for the model, so it is English whatever language the pane is in.
@@ -12,7 +12,7 @@ import { recentNodes, trunkNodes } from './tree'
 import { oneLine, truncate } from './width'
 
 export const SECTION_ID = 'decision-tree:record'
-/** The limit on the "on" section, in characters (spec 7.3: about 1,500). */
+/** The limit on the "on" section, in characters (about 1,500). */
 export const MAX_SECTION = 1500
 export const RECENT_IN_PROMPT = 10
 
@@ -23,12 +23,12 @@ export const PAUSED_LINE =
   "This project's decision record is paused (the user can resume it with /decide resume). Do not record decisions."
 
 // Short on purpose: the section is rebuilt every turn and every character is paid for again; the
-// tool descriptions carry the full rules, and the room here goes to the tree.
+// tool descriptions carry the full rules (their language rule included), and the room here goes to the tree.
 const RULES = [
-  'Decision record ON: decision_record / decision_update / decision_note / decision_tree (their descriptions have the full rules).',
-  'Record what the user decides, gate results (decidedBy "gate"), plans they accept (planned) and open proposals (proposed); never mark an unagreed idea adopted; no progress or logs.',
-  'Evidence: numbers and intervals; evidence.run is the run name, evidence.source the report path. A replaced decision: update it with supersededBy. One matter, one node.',
-  'Choose the parent from the list below, or call decision_tree. Technical terms in English, other text in the language the user writes in; never translate recorded text.',
+  'Decision record ON: decision_record / decision_update / decision_note / decision_tree.',
+  'Record what the user decides, gate results (decidedBy "gate"), accepted plans (planned) and open proposals (proposed); never mark an unagreed idea adopted; no progress or logs.',
+  'Evidence: numbers and intervals; evidence.run is the run name, evidence.source the report path. Replaced decision: update it with supersededBy. One matter, one node.',
+  "Choose the parent from the list below, or call decision_tree. Language: the user's; professional names and common work words (bug, doc, run) stay English; text not in English also needs en (its English version).",
 ].join('\n')
 
 /** How much each part of the tree may take, from the roomiest to the tightest. */

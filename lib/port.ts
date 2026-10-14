@@ -11,7 +11,7 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { DtLang, DtModel, DtNow, DtProject, DtUi } from '../types'
+import type { DtLang, DtModel, DtNow, DtProject, DtTm, DtTreeInfo, DtUi } from '../types'
 
 type E = EngineInterface
 
@@ -28,6 +28,8 @@ export type Port = {
   /** Hands the model a prompt of its own, which starts a turn once the session is idle (`/decide init`). */
   prompt: Pick<E['prompt'], 'submit'>
   tool: Pick<E['tool'], 'register'>
+  /** One completion through the session's own client: the translator asks for the other language's version of a text (`display.translate` switches it off). */
+  model: Pick<E['model'], 'complete'>
   ui: Pick<E['ui'], 'open' | 'panes' | 'focus' | 'toast'> & {
     /** Draws the pane again (its ages move with the clock). */
     invalidate: () => void
@@ -42,6 +44,14 @@ export type Port = {
     ui: Cell<DtUi>
     lang: Cell<DtLang>
     now: Cell<DtNow>
+    /** The translation memory: what the texts of the tree read like in the other language. */
+    tm: Cell<DtTm>
+    /** Every tree of the project, for the tabs and the overview. */
+    trees: Cell<DtTreeInfo[]>
+    /** The colour scheme in use (an id of lib/palettes.ts). */
+    scheme: Cell<string>
+    /** How many texts wait for their rendition. */
+    translating: Cell<number>
     /** Token of the Runtime that owns the poll (a reload replaces it). */
     owner: Cell<string>
   }

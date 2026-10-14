@@ -1,6 +1,6 @@
 // Replays event files, in file-name order, into the tree of decisions.
 //
-// The rules (spec 5.3): `add` of an existing id is ignored, `update` overwrites
+// The rules: `add` of an existing id is ignored, `update` overwrites
 // field by field, `addEvidence` / `addSources` append without duplicates, a
 // `move` that would make a cycle is refused, `retract` marks a node instead of
 // deleting it, and a file that cannot be read, or says something this version

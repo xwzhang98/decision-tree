@@ -7,6 +7,7 @@ import {
   eventFileName,
   fmtClock,
   fmtDate,
+  fmtWhen,
   isEventFile,
   isIso,
   isoLocal,
@@ -62,14 +63,14 @@ test('replay: a duplicate id is ignored and counted as a warning', () => {
 })
 
 test('replay: addEvidence and addSources append without duplicates; null clears', () => {
-  const e1 = { label: 'warmed P99', value: '-12.6%', ci: '[-15.1, -10.4]', run: 'v22 s0' }
+  const e1 = { label: 'warm cold start', value: '-17.4%', ci: '[-19.8, -15.3]', run: 'bench s0' }
   const m = replay([
     add('n-one', null, { evidence: [e1], sources: ['reports/a.md'] }),
-    ev({ op: 'update', id: 'n-one', patch: { addEvidence: [e1, { label: 'seed 1', value: '-13.5%' }], addSources: ['reports/a.md', 'reports/b.md'] } }),
+    ev({ op: 'update', id: 'n-one', patch: { addEvidence: [e1, { label: 'run 1', value: '-7.4%' }], addSources: ['reports/a.md', 'reports/b.md'] } }),
   ])
   const n = m.nodes[0]!
   expect(n.evidence).toHaveLength(2)
-  expect(n.evidence![1]!.label).toBe('seed 1')
+  expect(n.evidence![1]!.label).toBe('run 1')
   expect(n.sources).toEqual(['reports/a.md', 'reports/b.md'])
   const cleared = replay([
     add('n-one', null, { summary: 'x', supersededBy: 'other' }),
@@ -183,12 +184,12 @@ test('event file names sort in time order and carry session and sequence', () =>
 })
 
 test('ids: slugs are validated, made unique, and generated when absent', () => {
-  expect(slugify('V22 Adopted!')).toBe('v22-adopted')
-  expect(slugify('构建版本定为')).toBe('')
+  expect(slugify('Merge Adopted!')).toBe('merge-adopted')
+  expect(slugify('合并规则定为')).toBe('')
   expect(slugify('ab')).toBe('')
   expect(slugify('a'.repeat(80)).length).toBe(48)
-  expect(uniqueId('v22-adopted', id => id === 'v22-adopted')).toBe('v22-adopted-2')
-  expect(uniqueId('v22-adopted', id => id === 'v22-adopted' || id === 'v22-adopted-2')).toBe('v22-adopted-3')
+  expect(uniqueId('merge-adopted', id => id === 'merge-adopted')).toBe('merge-adopted-2')
+  expect(uniqueId('merge-adopted', id => id === 'merge-adopted' || id === 'merge-adopted-2')).toBe('merge-adopted-3')
   const long = 'a'.repeat(48)
   expect(uniqueId(long, id => id === long).length).toBeLessThanOrEqual(48)
   expect(autoId(1000)).toBe('d-rs')
@@ -213,12 +214,33 @@ test('time helpers: iso checks, local ISO with offset, and display formats', () 
   expect(fmtClock('garbage')).toBe('')
 })
 
+test('time helpers: a moment of today shows its clock, a moment of any other day its date', () => {
+  // (built from the local calendar, so that the day does not depend on the time zone the test runs in)
+  const at = (y: number, mo: number, d: number, h: number, mi: number) => new Date(y, mo - 1, d, h, mi).toISOString()
+  const now = new Date(2026, 9, 9, 12, 0).getTime()
+  expect(fmtWhen(at(2026, 10, 9, 8, 5), now)).toBe('08:05')
+  expect(fmtWhen(at(2026, 10, 9, 23, 59), now)).toBe('23:59')
+  expect(fmtWhen(at(2026, 10, 9, 0, 0), now)).toBe('00:00')
+  // yesterday, tomorrow, and the same day of another year
+  expect(fmtWhen(at(2026, 10, 8, 23, 59), now)).toBe('10-08')
+  expect(fmtWhen(at(2026, 10, 10, 0, 0), now)).toBe('10-10')
+  expect(fmtWhen(at(2025, 10, 9, 12, 0), now)).toBe('10-09')
+  // a bare date has no clock, even when it is today's
+  expect(fmtWhen('2026-10-09', now)).toBe('10-09')
+  expect(fmtWhen('2026-10-08', now)).toBe('10-08')
+  // nothing to show
+  expect(fmtWhen('', now)).toBe('')
+  expect(fmtWhen('garbage', now)).toBe('')
+  expect(fmtWhen(null, now)).toBe('')
+  expect(fmtWhen(undefined, now)).toBe('')
+})
+
 // ------------------------------------------------------------ ids and text from outside
 
 test('replay: ids from outside are taken as they are, unless they would break a line, a key or a prompt', () => {
   // scripts and other tools write ids too: capitals, underscores, dots, colons, Chinese, up to MAX_ID long
   const longest = 'g'.repeat(MAX_ID)
-  const odd = ['Gate_1', 'run.v2.2', 'seed:0', '决定-一', '__proto__', longest]
+  const odd = ['Gate_1', 'run.v1.2', 'seed:0', '决定-一', '__proto__', longest]
   const m = replay([
     ...odd.map(id => add(id, null)),
     ev({ op: 'update', id: 'Gate_1', patch: { summary: 'found by its own id' } }),
@@ -287,16 +309,16 @@ test('replay: a file name or a reference with control characters never reaches a
 
 test('replay: a fork event says where the tree began, and the first one counts', () => {
   const at = '20261010T120003000Z_abcdef_0002.json'
-  const first = ev({ op: 'fork', actor: 'user', text: 'SQL 第三版', base: { tree: 'main', at, count: 3 } })
+  const first = ev({ op: 'fork', actor: 'user', text: '另一条路线', base: { tree: 'main', at, count: 3 } })
   const m = replay([
     ev({ op: 'start' }),
     add('copied-node', null),
     first,
     // a tree is opened once: a second fork event (a stray file, a script's) does not move where it began
-    ev({ op: 'fork', actor: 'model', text: 'elsewhere', base: { tree: 'sql-v2', at: 'x.json', count: 9 } }),
+    ev({ op: 'fork', actor: 'model', text: 'elsewhere', base: { tree: 'side-a', at: 'x.json', count: 9 } }),
     add('own-node', 'copied-node'),
   ])
-  expect(m.fork).toEqual({ tree: 'main', at, count: 3, ts: first.event!.ts, actor: 'user', title: 'SQL 第三版' })
+  expect(m.fork).toEqual({ tree: 'main', at, count: 3, ts: first.event!.ts, actor: 'user', title: '另一条路线' })
   expect(m.warningCount).toBe(0)
   // a fork is not a decision: the nodes are the ones the other events made
   expect(m.nodes.map(n => n.id)).toEqual(['copied-node', 'own-node'])

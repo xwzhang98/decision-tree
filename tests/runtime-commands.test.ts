@@ -21,10 +21,10 @@ const lastEvent = (e: FakeEngine) => eventsOf(e).at(-1) as Record<string, unknow
 // ---------------------------------------------------------------- start and the rest of the verbs
 
 test('/decide start: writes the record, opens the pane with the keyboard, and says so', async () => {
-  const { rt, engine, started } = await on('orders-api-rewrite')
-  expect(started).toBe('Started recording decisions for orders-api-rewrite (data in .claude/decisions/)')
+  const { rt, engine, started } = await on('notes-app')
+  expect(started).toBe('Started recording decisions for notes-app (data in .claude/decisions/)')
   expect(rt.mode).toBe('recording')
-  expect(JSON.parse(engine.disk.text(configPath())).title).toBe('orders-api-rewrite')
+  expect(JSON.parse(engine.disk.text(configPath())).title).toBe('notes-app')
   expect(eventsOf(engine).map(e => e.op)).toEqual(['start'])
   expect(engine.opens.at(-1)?.focus).toBe(true)
   // a user-made start registers the other tools too
@@ -40,30 +40,30 @@ test('/decide start without a title uses the folder name; twice says it is alrea
 
 test('/decide add, status, note, retract write events by the user and answer in one line', async () => {
   const { rt, engine, p } = await on()
-  expect(await rt.command(p, 'decide', 'add Build version v2.2 --id build-v22 --status planned --trunk')).toBe('Recorded build-v22 (root, Planned)')
-  expect(lastEvent(engine)).toMatchObject({ op: 'add', actor: 'user', id: 'build-v22' })
-  expect(await rt.command(p, 'decide', 'add Pool size absolute --parent build-v22 --status proposed')).toContain('under build-v22')
+  expect(await rt.command(p, 'decide', 'add Merge rule v1.2 --id merge-rule --status planned --trunk')).toBe('Recorded merge-rule (root, planned)')
+  expect(lastEvent(engine)).toMatchObject({ op: 'add', actor: 'user', id: 'merge-rule' })
+  expect(await rt.command(p, 'decide', 'add Window size absolute --parent merge-rule --status proposed')).toContain('under merge-rule')
 
-  expect(await rt.command(p, 'decide', 'status build-v22 adopted')).toBe('Updated build-v22: status Adopted')
-  expect(lastEvent(engine)).toMatchObject({ op: 'update', actor: 'user', id: 'build-v22', patch: { status: 'adopted' } })
+  expect(await rt.command(p, 'decide', 'status merge-rule adopted')).toBe('Updated merge-rule: status adopted')
+  expect(lastEvent(engine)).toMatchObject({ op: 'update', actor: 'user', id: 'merge-rule', patch: { status: 'adopted' } })
 
-  expect(await rt.command(p, 'decide', 'note build-v22 two seeds agree')).toBe('Noted on build-v22')
+  expect(await rt.command(p, 'decide', 'note merge-rule two seeds agree')).toBe('Noted on merge-rule')
   expect(lastEvent(engine)).toMatchObject({ op: 'note', actor: 'user', text: 'two seeds agree' })
 
-  expect(await rt.command(p, 'decide', 'retract pool-size-absolute wrong run')).toBe('Retracted pool-size-absolute')
+  expect(await rt.command(p, 'decide', 'retract window-size-absolute wrong run')).toBe('Retracted window-size-absolute')
   expect(lastEvent(engine)).toMatchObject({ op: 'retract', actor: 'user', reason: 'wrong run' })
-  expect(engine.cells.model.nodes.find(n => n.id === 'pool-size-absolute')?.retracted).toBeDefined()
+  expect(engine.cells.model.nodes.find(n => n.id === 'window-size-absolute')?.retracted).toBeDefined()
 })
 
 test('/decide: a title piece finds the node, an unknown or ambiguous one says why, nothing is written', async () => {
   const { rt, engine, p } = await on()
-  await rt.command(p, 'decide', 'add Pool size absolute --id pool-abs --status proposed')
-  await rt.command(p, 'decide', 'add Pool size ratio --id pool-ratio --status proposed')
+  await rt.command(p, 'decide', 'add Window size absolute --id window-abs --status proposed')
+  await rt.command(p, 'decide', 'add Window size ratio --id window-ratio --status proposed')
   const before = eventFiles(engine).length
-  expect(await rt.command(p, 'decide', 'status "size absolute" adopted')).toBe('Updated pool-abs: status Adopted')
-  expect(await rt.command(p, 'decide', 'status pool adopted')).toContain('matches several nodes')
+  expect(await rt.command(p, 'decide', 'status "size absolute" adopted')).toBe('Updated window-abs: status adopted')
+  expect(await rt.command(p, 'decide', 'status window adopted')).toContain('matches several nodes')
   expect(await rt.command(p, 'decide', 'status nothing-here adopted')).toContain('No node matches')
-  expect(await rt.command(p, 'decide', 'status pool-abs banana')).toContain('Unknown status "banana"')
+  expect(await rt.command(p, 'decide', 'status window-abs banana')).toContain('Unknown status "banana"')
   expect(await rt.command(p, 'decide', 'status')).toContain('Missing a node')
   expect(await rt.command(p, 'decide', 'frobnicate')).toContain('Usage: /decide')
   expect(eventFiles(engine)).toHaveLength(before + 1)
@@ -79,9 +79,9 @@ test('/decide: while the record is off, the verbs that need it say how to start'
 
 test('manual edits are allowed while recording is paused', async () => {
   const { rt, p, engine } = await on()
-  await rt.command(p, 'decide', 'add Build version --id build-v22 --status proposed')
+  await rt.command(p, 'decide', 'add Merge rule --id merge-rule --status proposed')
   await rt.command(p, 'decide', 'pause')
-  expect(await rt.command(p, 'decide', 'status build-v22 adopted')).toBe('Updated build-v22: status Adopted')
+  expect(await rt.command(p, 'decide', 'status merge-rule adopted')).toBe('Updated merge-rule: status adopted')
   expect(lastEvent(engine)).toMatchObject({ actor: 'user' })
 })
 
@@ -89,14 +89,14 @@ test('manual edits are allowed while recording is paused', async () => {
 
 test('/tree opens the pane with the keyboard; a surface that places no panes gets the tree as text', async () => {
   const { rt, engine, p } = await on()
-  await rt.command(p, 'decide', 'add Build version --id build-v22 --status adopted')
+  await rt.command(p, 'decide', 'add Merge rule --id merge-rule --status adopted')
   expect(await rt.command(p, 'tree', '')).toBe('Opened the decision pane')
   expect(engine.opens.at(-1)).toMatchObject({ id: 'decision-tree', focus: true, columns: 72 })
 
   engine.placed = false
   const text = await rt.command(p, 'tree', '')
   expect(text).toContain('no room for the pane')
-  expect(text).toContain('build-v22')
+  expect(text).toContain('merge-rule')
 })
 
 test('/tree on a project that is not recorded opens the pane, which explains how to start', async () => {
@@ -188,17 +188,17 @@ test('pausing in one session reaches the others at the next poll', async () => {
 test('language: the prompt decides the language of the receipts, the pane and the title', async () => {
   const { rt, engine, p } = await on()
   expect(rt.lang).toBe('en')
-  await rt.onPrompt(p, '把构建版本定为 v2.2，池的大小用绝对值')
+  await rt.onPrompt(p, '把合并规则定为 v1.2，继续用 JSON 文件')
   expect(rt.lang).toBe('zh')
   expect(engine.cells.lang).toBe('zh')
   expect(engine.store.get(`lang:${ROOT}`)).toBe('zh')
-  expect(await rt.command(p, 'decide', 'add 构建版本 v2.2 --id build-v22 --status planned --trunk')).toBe('已记录 build-v22（根节点，计划）')
-  const r = await rt.toolCall(p, 'decision_record', { title: '池的大小用绝对值', parent: 'build-v22', status: 'adopted' })
-  expect('result' in r && r.result).toMatch(/^已记录 \S+（挂在 build-v22 下，采用）$/)
+  expect(await rt.command(p, 'decide', 'add 合并规则 v1.2 --id merge-rule --status planned --trunk')).toBe('已记录 merge-rule（根 node，planned）')
+  const r = await rt.toolCall(p, 'decision_record', { title: '继续用 JSON 文件', parent: 'merge-rule', status: 'adopted' })
+  expect('result' in r && r.result).toMatch(/^已记录 \S+（挂在 merge-rule 下，adopted）$/)
   // what was recorded stays as it was written
-  expect(engine.cells.model.nodes.some(n => n.title === '池的大小用绝对值')).toBe(true)
+  expect(engine.cells.model.nodes.some(n => n.title === '继续用 JSON 文件')).toBe(true)
   // the pane is told, and its tab is renamed
-  expect(engine.opens.at(-1)?.title).toBe('决策')
+  expect(engine.opens.at(-1)?.title).toBe('Decisions')
 })
 
 test('language: slash commands do not change it, English prompts bring it back, a fixed setting wins', async () => {

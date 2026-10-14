@@ -18,24 +18,24 @@ import type { DtStatus } from '../types'
 const SAMPLE = JSON.stringify({
   updatedAt: '2026-10-10T00:20:00-04:00',
   lanes: [
-    { name: 'ZETA', run: 'gateway s0', state: 'running', step: 3400, total: 4000, eta: '23:50', note: '预热中' },
-    { name: 'BETA-0', run: 'ablate_wide s0', state: 'running', step: 420, total: 4000, eta: '09:10' },
+    { name: 'ALPHA', run: 'sync-bench s0', state: 'running', step: 1700, total: 2000, eta: '18:40', note: '启动中' },
+    { name: 'BRAVO', run: 'merge-eval s0', state: 'running', step: 210, total: 2000, eta: '07:25' },
   ],
-  next: [{ text: '闸 → probe s1', eta: '06:15' }],
-  warnings: ['GAMMA 空闲'],
+  next: [{ text: '回归 → restore-test s1', eta: '05:05' }],
+  warnings: ['DELTA 空闲'],
 })
 
 test('status output: the documented example parses', () => {
   const out = parseStatusOutput(SAMPLE)
   if (!('data' in out)) throw new Error(out.error)
   expect(out.data.lanes.length).toBe(2)
-  expect(out.data.lanes[0]!.name).toBe('ZETA')
-  expect(out.data.lanes[0]!.step).toBe(3400)
-  expect(out.data.lanes[0]!.note).toBe('预热中')
+  expect(out.data.lanes[0]!.name).toBe('ALPHA')
+  expect(out.data.lanes[0]!.step).toBe(1700)
+  expect(out.data.lanes[0]!.note).toBe('启动中')
   expect(out.data.lanes[1]!.note).toBe('')
-  expect(out.data.next[0]!.text).toBe('闸 → probe s1')
-  expect(out.data.next[0]!.eta).toBe('06:15')
-  expect(out.data.warnings).toEqual(['GAMMA 空闲'])
+  expect(out.data.next[0]!.text).toBe('回归 → restore-test s1')
+  expect(out.data.next[0]!.eta).toBe('05:05')
+  expect(out.data.warnings).toEqual(['DELTA 空闲'])
   expect(out.data.updatedAt).toBe('2026-10-10T00:20:00-04:00')
 })
 
@@ -88,21 +88,21 @@ test('status output: a missing lanes/next/warnings is an empty block, not an err
 })
 
 test('progress bar: ten cells, unicode and ascii, clamped', () => {
-  expect(progressBar(3400, 4000, false)).toBe('████████░░')
-  expect(progressBar(420, 4000, false)).toBe('█░░░░░░░░░')
-  expect(progressBar(120, 4000, false)).toBe('░░░░░░░░░░')
-  expect(progressBar(4000, 4000, false)).toBe('██████████')
-  expect(progressBar(9000, 4000, false)).toBe('██████████')
-  expect(progressBar(null, 4000, false)).toBe('░░░░░░░░░░')
+  expect(progressBar(1700, 2000, false)).toBe('████████░░')
+  expect(progressBar(210, 2000, false)).toBe('█░░░░░░░░░')
+  expect(progressBar(60, 2000, false)).toBe('░░░░░░░░░░')
+  expect(progressBar(2000, 2000, false)).toBe('██████████')
+  expect(progressBar(9000, 2000, false)).toBe('██████████')
+  expect(progressBar(null, 2000, false)).toBe('░░░░░░░░░░')
   expect(progressBar(5, 0, false)).toBe('░░░░░░░░░░')
-  expect(progressBar(3400, 4000, true)).toBe('########..')
+  expect(progressBar(1700, 2000, true)).toBe('########..')
   expect(progressBar(2, 4, true, 4)).toBe('##..')
 })
 
 test('step text is right-aligned to the width of the total', () => {
-  expect(stepText(3400, 4000)).toBe('3400/4000')
-  expect(stepText(420, 4000)).toBe(' 420/4000')
-  expect(stepText(120, 4000)).toBe(' 120/4000')
+  expect(stepText(1700, 2000)).toBe('1700/2000')
+  expect(stepText(210, 2000)).toBe(' 210/2000')
+  expect(stepText(120, 2000)).toBe(' 120/2000')
   expect(stepText(null, null)).toBe('')
   expect(stepText(null, 40)).toBe(' ?/40')
 })
@@ -164,7 +164,7 @@ test('glyphs: nine statuses, one column each, ascii fallback distinct enough', (
 
 test('describeArgv: the command as a shell reads it, nothing hidden', () => {
   // words a shell reads as they stand are shown as they stand
-  expect(describeArgv(['bash', 'scripts/decision_status.sh', '--lane=ZETA', '-v'])).toBe('bash scripts/decision_status.sh --lane=ZETA -v')
+  expect(describeArgv(['bash', 'scripts/decision_status.sh', '--lane=ALPHA', '-v'])).toBe('bash scripts/decision_status.sh --lane=ALPHA -v')
   expect(describeArgv([])).toBe('')
 
   // words it would split, expand or run are quoted, so one word is one word
@@ -178,7 +178,7 @@ test('describeArgv: the command as a shell reads it, nothing hidden', () => {
   // a shell expands a word that starts with `~` (a home folder) or `=` (a path), so those are quoted; inside a word they are plain
   expect(describeArgv(['bash', '~/x.sh'])).toBe("bash '~/x.sh'")
   expect(describeArgv(['bash', '=x'])).toBe("bash '=x'")
-  expect(describeArgv(['bash', 'a~b', 'dir/~x', '--lane=ZETA'])).toBe('bash a~b dir/~x --lane=ZETA')
+  expect(describeArgv(['bash', 'a~b', 'dir/~x', '--lane=ALPHA'])).toBe('bash a~b dir/~x --lane=ALPHA')
   // a first word of the form NAME=value is an assignment to a shell, not the command, so it is quoted there and nowhere else
   expect(describeArgv(['FOO=bar', 'cmd'])).toBe("'FOO=bar' cmd")
   expect(describeArgv(['_x1=2'])).toBe("'_x1=2'")

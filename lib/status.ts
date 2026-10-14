@@ -1,5 +1,5 @@
 // The "now" block's data: what the project's status command prints, how it is
-// checked, how old it is, and the person's approval to run it (spec 10).
+// checked, how old it is, and the person's approval to run it.
 
 import type { DtLane, DtLaneState, DtNowData } from '../types'
 import { firstLine } from './journal'
@@ -101,7 +101,7 @@ export function progressBar(step: number | null, total: number | null, ascii: bo
   return full.repeat(filled) + empty.repeat(cells - filled)
 }
 
-/** `3400/4000`, right-aligned to the width of the total. */
+/** `1700/2000`, right-aligned to the width of the total. */
 export function stepText(step: number | null, total: number | null): string {
   if (step === null && total === null) return ''
   const s = step === null ? '?' : String(step)

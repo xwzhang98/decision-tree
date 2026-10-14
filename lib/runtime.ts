@@ -7,32 +7,41 @@
 // Writes to the record are serialized by `exclusive`, so a tool call, a command
 // and the 5-second poll never interleave.
 
-import type { DtActor, DtConfig, DtFilter, DtLang, DtMode, DtNow, DtUi } from '../types'
+import type { ModelCompleteResult } from 'claude-code'
+
+import type { DtActor, DtConfig, DtFilter, DtLang, DtMode, DtModel, DtNewTree, DtNow, DtTm, DtTreeInfo, DtUi } from '../types'
+import { NEW_KEYS, schemeKey, schemeOfKey, treeKey, treeOfKey } from './bar'
 import { parseConfig, setDisplay, setRecording } from './config'
 import { parseDecide } from './commands'
 import type { Parsed } from './commands'
 import { MAIN, isStatus, shortSession } from './events'
+import { MAX_TREES, orderTrees, treeInfoOf } from './forest'
 import { detectLanguage, t } from './i18n'
 import { initPrompt } from './init'
 import type { InitWrite } from './init'
 import type { Dollar } from './io'
 import { engineIo, isIgnoredByGit, projectIo } from './io'
 import { Journal, firstLine } from './journal'
+import { EMPTY_TM, wantedRenditions } from './lang'
+import type { Want } from './lang'
 import type { Ctx, Done } from './ops'
 import type { NewTreeInput } from './ops'
 import { addNode, importNodes, newTree, noteNode, recordNode, retractNode, startRecord, treeList, treeLog, updateNode, useTree } from './ops'
+import { DEFAULT_SCHEME, SCHEMES, findScheme, schemeOf } from './palettes'
 import { forkText } from './versions'
 import { SECTION_ID, sectionText } from './prompt'
 import { baseName, findRoot, resolveFrom } from './project'
 import { EMPTY_NOW } from './state'
 import { approvalHash, failureText, parseStatusOutput, sameArgv, storeKey } from './status'
+import { TmStore } from './tm'
 import { SPECS, WRITE_TOOLS, treeReport } from './tools'
 import type { ToolName } from './tools'
+import { MAX_TEXT_TRIES, failureOf, nextBatch, readReply, requestFor, retryDelay } from './translator'
 import { buildIndex, effectiveSelection, resolveRef, revealPath, rowIndex, visibleRows } from './tree'
 import { oneLine } from './width'
 
 export const PANE_ID = 'decision-tree'
-/** How often the record and config.json are looked at again (spec 9.8). */
+/** How often the record and config.json are looked at again. */
 export const POLL_MS = 5000
 /** The longest one operation on the record may take; a disk that does not answer must not hold up everything behind it. */
 export const OP_TIMEOUT_MS = 30_000
@@ -40,7 +49,21 @@ export const OP_TIMEOUT_MS = 30_000
 export const SYNC_TIMEOUT_MS = 10_000
 /** Opening a tree copies every event file of the version it starts from: more than one read or write. */
 export const TREE_TIMEOUT_MS = 120_000
+/**
+ * How long a look at the other trees of the project may take (they are read in turns, so nothing else waits
+ * for more than one tree): at the start of a session, when the overview opens, and at each poll.
+ */
+export const TREES_START_MS = 4000
+export const TREES_OPEN_MS = 8000
+export const TREES_POLL_MS = 12_000
 const MAX_LISTED = 500
+/** How many wanted texts the translator looks at in one round, and how many rounds one run may take before the next poll carries on. */
+const WANT_WINDOW = 400
+const MAX_TRANSLATE_ROUNDS = 40
+/** Failures in a row after which the person is told, and the pane stops saying it is translating. */
+const TELL_AFTER = 3
+/** Where the colour scheme is kept: one value for every project and every session. */
+const SCHEME_STORE_KEY = 'scheme'
 /**
  * How long after `/decide init` is done each attempt to hand the model its job is made, the first and then each retry
  * (the engine refuses the prompt while the command that asks for it is still running).
@@ -82,7 +105,10 @@ export class Runtime {
   ready = false
   private starting: Promise<void> | null = null
   private chain: Promise<unknown> = Promise.resolve()
+  /** The tree the project records into. */
   private journal: Journal | null = null
+  /** Every tree of the project that is known, the one recorded into among them (a journal keeps what it has read of its tree). */
+  private journals = new Map<string, Journal>()
   private timer: { cancel: () => void } | null = null
 
   root = ''
@@ -93,12 +119,39 @@ export class Runtime {
   private configError: string | null = null
   /** The language the last prompt was written in (used while `display.language` is auto). */
   private auto: DtLang = 'en'
+  /**
+   * The language the person chose with the switch in the pane: it beats config.json and the language of the
+   * prompts, for this project on this machine, until `/decide lang` sets one for everybody.
+   */
+  private pinned: DtLang | null = null
   lang: DtLang = 'en'
 
   private registered = new Set<ToolName>()
-  private published: unknown = null
+  /** What `$.state.model` holds: the tree the pane shows, and its model as it was read. */
+  private published: { tree: string; model: DtModel } | null = null
+  /** What `$.state.trees` holds, and the facts about each tree worked out for the model they were worked out from. */
+  private publishedTrees: DtTreeInfo[] | null = null
+  private infos = new Map<string, { model: DtModel; info: DtTreeInfo }>()
+  /** True while the other trees are being looked at (one round at a time). */
+  private treesBusy = false
   private promptText = ''
   nowMs = 0
+
+  /** The project's translation memory (`.claude/decisions/i18n/`), and the memory `$.state.tm` holds. */
+  private tmStore: TmStore | null = null
+  private publishedTm: DtTm | null = null
+  /** The translator: one request at a time, a rest after a failure, and what it has already been told about. */
+  private translatorBusy = false
+  /** The colour scheme in use (an id of palettes.ts). */
+  private scheme = DEFAULT_SCHEME
+  private translateFailures = 0
+  private translateRetryAt = 0
+  private translateStuck = false
+  private translateTold = false
+  private publishedTranslating: number | null = null
+  /** How often each text was asked for (`<language>\0<text>`): one that keeps coming back unusable is left alone. */
+  private tries = new Map<string, number>()
+  private abort = new AbortController()
 
   private statusBusy = false
   private lastStatusAt = 0
@@ -148,10 +201,15 @@ export class Runtime {
     this.root = await findRoot(projectIo($), cwd)
     this.session = shortSession(await $.session.id().catch(() => ''))
     this.journal = new Journal(engineIo($), this.root, this.session)
+    this.journals = new Map([[MAIN, this.journal]])
+    this.tmStore = new TmStore(engineIo($), this.root, this.session)
 
     const stored = await $.store.get(`lang:${this.root}`).catch(() => undefined)
     if (stored === 'zh' || stored === 'en') this.auto = stored
     else this.auto = await $.state.lang.read()
+    const pin = await $.store.get(`pin:${this.root}`).catch(() => undefined)
+    this.pinned = pin === 'zh' || pin === 'en' ? pin : null
+    this.scheme = await this.readScheme($)
 
     await this.readConfig()
     this.lang = this.effectiveLang()
@@ -161,7 +219,11 @@ export class Runtime {
     } finally {
       this.quietSwitch = false
     }
-    if (this.mode !== 'off') await this.syncJournal($)
+    if (this.mode !== 'off') {
+      await this.syncJournal($)
+      await this.syncTrees($, TREES_START_MS, true)
+      await this.syncTm($)
+    }
 
     await this.registerTools($)
     await this.syncNow($)
@@ -173,10 +235,11 @@ export class Runtime {
     this.ready = true
   }
 
-  /** Stops the poll (a test, or a reload that rebuilt the object). */
+  /** Stops the poll (a test, or a reload that rebuilt the object), and a translation that is under way. */
   stop(): void {
     this.timer?.cancel()
     this.timer = null
+    this.abort.abort()
   }
 
   /**
@@ -202,9 +265,15 @@ export class Runtime {
       this.reclaiming = this.exclusive(async () => {
         await $.state.owner.update(() => this.token)
         this.published = null
+        this.publishedTrees = null
+        this.publishedTm = null
+        this.publishedTranslating = null
         this.lastStatusAt = 0
         const id = await $.session.id().catch(() => '')
-        if (this.journal !== null && id !== '') this.journal.session = shortSession(id)
+        if (id !== '') {
+          for (const j of this.journals.values()) j.session = shortSession(id)
+          if (this.tmStore !== null) this.tmStore.session = shortSession(id)
+        }
         await this.readConfig()
         await this.applyMode($)
       }).finally(() => {
@@ -320,6 +389,12 @@ export class Runtime {
       },
       lang: this.lang,
       actor,
+      // (inside `exclusive` already: the memory is written and published here, not queued behind the call that is waiting for it)
+      english: async pairs => {
+        if (this.tmStore === null) return
+        await this.tmStore.append('en', pairs, { actor, via: 'tool' }, now)
+        await this.publishTm($)
+      },
     }
   }
 
@@ -376,7 +451,9 @@ export class Runtime {
     return changed
   }
 
+  /** What the person chose with the switch, else what config.json fixes, else the language of the prompts. */
   private effectiveLang(): DtLang {
+    if (this.pinned !== null) return this.pinned
     const fixed = this.config?.display.language
     return fixed === 'zh' || fixed === 'en' ? fixed : this.auto
   }
@@ -406,6 +483,7 @@ export class Runtime {
     await this.publishAll($)
     this.refreshPrompt()
     if (retitle) await this.retitle($)
+    void this.translate($).catch(() => undefined)
   }
 
   /**
@@ -420,7 +498,7 @@ export class Runtime {
       this.treeProblem = null
       return false
     }
-    const candidate = here.sibling(wanted)
+    const candidate = this.journalOf(wanted)
     if (wanted !== MAIN) {
       let complete = false
       try {
@@ -458,16 +536,122 @@ export class Runtime {
     const project = { root: this.root, mode: this.mode, config: this.config, configError: this.configError, tree: this.journal!.tree }
     await $.state.project.update(() => project)
     await $.state.lang.update(() => this.lang)
+    await $.state.scheme.update(() => this.scheme)
     await this.publish($)
+    await this.publishTm($)
   }
 
-  /** Puts the journal's model into `$.state` when it changed. */
+  /** The journal of a tree of this project; one is made (and has read nothing yet) for a tree not met before. */
+  private journalOf(tree: string): Journal {
+    let j = this.journals.get(tree)
+    if (j === undefined) {
+      j = this.journal!.sibling(tree)
+      this.journals.set(tree, j)
+    }
+    return j
+  }
+
+  /** Whether the pane can show this tree: it is the first one or the one recorded into, or it is there whole (its `fork` event is written). */
+  private hasTree(tree: string): boolean {
+    if (tree === MAIN || tree === this.journal?.tree) return true
+    const j = this.journals.get(tree)
+    return j !== undefined && j.model().fork !== null
+  }
+
+  /** The tree the pane shows: the one the person chose to look at, else the one recorded into (also when the chosen one is gone). */
+  private async viewedName($: Dollar): Promise<string> {
+    const ui = await $.state.ui.read()
+    if (ui.tree === null) return this.journal!.tree
+    if (this.hasTree(ui.tree)) return ui.tree
+    const gone = ui.tree
+    await $.state.ui.update(u => (u.tree === gone ? { ...u, tree: null, editing: null } : u))
+    return this.journal!.tree
+  }
+
+  /** Puts the trees, and the model of the tree the pane shows, into `$.state` when they changed. */
   private async publish($: Dollar): Promise<void> {
-    const model = this.mode === 'off' ? undefined : this.journal!.model()
-    const next = model ?? null
-    if (next === this.published) return
-    this.published = next
-    if (model !== undefined) await $.state.model.update(() => model)
+    if (this.mode === 'off') {
+      this.published = null
+      return
+    }
+    await this.publishTrees($)
+    const tree = await this.viewedName($)
+    const model = this.journalOf(tree).model()
+    if (this.published !== null && this.published.tree === tree && this.published.model === model) return
+    this.published = { tree, model }
+    await $.state.model.update(() => model)
+  }
+
+  /** The facts about every tree (for the tabs and the overview), worked out again only for a tree that changed. */
+  private async publishTrees($: Dollar): Promise<void> {
+    const here = this.journal!.tree
+    const infos: DtTreeInfo[] = []
+    for (const [name, j] of this.journals) {
+      const model = j.model()
+      // a copy that is not finished (no `fork` event yet) is not a tree to show
+      if (name !== MAIN && name !== here && model.fork === null) continue
+      let known = this.infos.get(name)
+      if (known === undefined || known.model !== model) {
+        known = { model, info: treeInfoOf(name, model, j.entries()) }
+        this.infos.set(name, known)
+      }
+      infos.push(known.info)
+    }
+    for (const name of [...this.infos.keys()]) if (!this.journals.has(name)) this.infos.delete(name)
+    const ordered = orderTrees(infos).slice(0, MAX_TREES)
+    const before = this.publishedTrees
+    if (before !== null && before.length === ordered.length && before.every((x, k) => x === ordered[k])) return
+    this.publishedTrees = ordered
+    await $.state.trees.update(() => ordered)
+  }
+
+  /**
+   * Looks at the other trees of the project: which there are, and what each holds now (each tree's folder is read
+   * in a turn of its own, so that a tool call waits for one tree and not for all). `locked` is for a caller that is
+   * already inside `exclusive`. Gives up when `budgetMs` has passed; the next round carries on.
+   */
+  private async syncTrees($: Dollar, budgetMs: number, locked = false): Promise<void> {
+    if (this.treesBusy || this.mode === 'off') return
+    this.treesBusy = true
+    const turn = <T>(fn: () => Promise<T>): Promise<T> => (locked ? fn() : this.exclusive(fn))
+    const until = Date.now() + budgetMs
+    try {
+      const names = await turn(() => this.listOthers())
+      for (const name of names) {
+        if (Date.now() > until) break
+        await turn(() => this.syncOther(name))
+      }
+    } catch {
+      // the next round looks again
+    } finally {
+      this.treesBusy = false
+    }
+  }
+
+  /** The names of the trees of the project other than the one recorded into; the journals of trees that are gone are dropped. */
+  private async listOthers(): Promise<string[]> {
+    const here = this.journal
+    if (here === null || this.mode === 'off') return []
+    let names: string[]
+    try {
+      names = await this.bounded(here.listTrees(), SYNC_TIMEOUT_MS)
+    } catch {
+      // a folder that cannot be read says nothing about which trees there are: what is known stays
+      return [...this.journals.keys()].filter(n => n !== here.tree)
+    }
+    const wanted = new Set<string>([MAIN, here.tree, ...names])
+    for (const name of [...this.journals.keys()]) if (!wanted.has(name)) this.journals.delete(name)
+    return [...wanted].filter(n => n !== here.tree)
+  }
+
+  /** Reads the events of one tree that were not read yet (in a turn, so never at the same time as a write to it). */
+  private async syncOther(name: string): Promise<void> {
+    if (this.mode === 'off' || name === this.journal?.tree) return
+    try {
+      await this.bounded(this.journalOf(name).sync(), SYNC_TIMEOUT_MS)
+    } catch {
+      // the last good model of that tree stays
+    }
   }
 
   /** After a write: refresh the derived snapshot and the pane. Call inside `exclusive`. */
@@ -507,7 +691,17 @@ export class Runtime {
         // the events of the tree config.json names may have arrived (a git pull)
         if (this.treeProblem !== null && (await this.selectTree($))) await this.applyMode($)
         else if (this.mode !== 'off' && (await this.syncJournal($))) await this.publish($)
+        // renditions another session (or a teammate's git pull) brought
+        if (this.mode !== 'off') await this.syncTm($)
       })
+      // the other trees: a tree opened in another session, events of a tree that is not the one recorded into
+      if (this.mode !== 'off') {
+        await this.syncTrees($, TREES_POLL_MS)
+        await this.exclusive(() => this.publish($))
+      }
+      // what still lacks its other-language version is asked for in the background; this poll does not wait for the answer
+      void this.translate($).catch(() => undefined)
+      await this.syncScheme($)
       await this.maybeAutoOpen($)
       await this.maybeRunStatus($)
       await this.redrawClock($)
@@ -576,11 +770,33 @@ export class Runtime {
     if (found === null || found === this.auto) return
     this.auto = found
     await $.store.set(`lang:${this.root}`, found).catch(() => undefined)
+    await this.followLang($)
+  }
+
+  /** The person chose a language with the switch of the pane (the `EN 中` strip or the `l` key). */
+  async setLang($: Dollar, lang: DtLang): Promise<void> {
+    await this.ensure($)
+    this.pinned = lang
+    await $.store.set(`pin:${this.root}`, lang).catch(() => undefined)
+    await this.followLang($)
+  }
+
+  /** Forgets the choice made with the switch (`/decide lang` has just set the language for everybody). */
+  private async unpin($: Dollar): Promise<void> {
+    if (this.pinned === null) return
+    this.pinned = null
+    await $.store.set(`pin:${this.root}`, '').catch(() => undefined)
+  }
+
+  /** Brings the pane's language in line with the rules above; the pane's tab is renamed when it changed. */
+  private async followLang($: Dollar): Promise<void> {
     const lang = this.effectiveLang()
     if (lang === this.lang) return
     this.lang = lang
     await $.state.lang.update(() => lang)
     await this.retitle($)
+    // (reading in Chinese wants Chinese versions of what was written in English)
+    void this.translate($).catch(() => undefined)
   }
 
   private async retitle($: Dollar): Promise<void> {
@@ -589,6 +805,140 @@ export class Runtime {
       if (panes.some(p => p.id === PANE_ID)) await $.ui.open({ id: PANE_ID, title: t(this.lang, 'pane.tab'), columns: 72 })
     } catch {
       // a pane that cannot be retitled keeps its old name
+    }
+  }
+
+  // ---------------------------------------------------------------- translation
+
+  /** Reads the renditions not seen yet (the poll, and right before the translator asks for more). Call inside `exclusive`. True when the memory changed. */
+  private async syncTm($: Dollar): Promise<boolean> {
+    const store = this.tmStore
+    if (store === null) return false
+    try {
+      await this.bounded(store.sync(), SYNC_TIMEOUT_MS)
+    } catch {
+      // what the store holds stays; the next poll looks again
+    }
+    return this.publishTm($)
+  }
+
+  /** Puts the memory into `$.state` when it is not there yet. */
+  private async publishTm($: Dollar): Promise<boolean> {
+    const tm = this.tmStore?.tm() ?? EMPTY_TM
+    if (this.publishedTm === tm) return false
+    this.publishedTm = tm
+    await $.state.tm.update(() => tm)
+    return true
+  }
+
+  /** The texts that still lack a rendition, the tree the pane shows first: the overview draws the other trees' titles too, and English is wanted for every text. */
+  private wantedTexts(limit: number): Want[] {
+    if (this.mode === 'off' || this.journal === null) return []
+    const models: DtModel[] = []
+    const take = (m: DtModel | undefined): void => {
+      if (m !== undefined && !models.includes(m)) models.push(m)
+    }
+    take(this.published?.model)
+    take(this.journal.model())
+    for (const [name, j] of this.journals) if (name === MAIN || j.model().fork !== null) take(j.model())
+    const skip = (w: Want): boolean => (this.tries.get(`${w.lang}\0${w.text}`) ?? 0) >= MAX_TEXT_TRIES
+    return wantedRenditions(models, this.tmStore?.tm() ?? EMPTY_TM, { zh: this.lang === 'zh', limit, skip })
+  }
+
+  /** Puts the number of texts waiting for a rendition into `$.state` (the pane says so), when it changed. */
+  private async setTranslating($: Dollar, n: number): Promise<void> {
+    if (this.publishedTranslating === n) return
+    this.publishedTranslating = n
+    await $.state.translating.update(() => n)
+  }
+
+  /** Lets the translator try again from scratch (the person switched translating on). */
+  private forgetFailures(): void {
+    this.translateFailures = 0
+    this.translateRetryAt = 0
+    this.translateStuck = false
+    this.translateTold = false
+    this.tries.clear()
+  }
+
+  /** One request to the model: the text it answered with, or why there is none. */
+  private async askModel($: Dollar, request: ReturnType<typeof requestFor>): Promise<{ text: string } | { why: string; permanent: boolean }> {
+    try {
+      const reply: ModelCompleteResult = await $.model.complete(request, { signal: this.abort.signal })
+      return reply.isAnswered ? { text: reply.text } : failureOf(reply)
+    } catch (err) {
+      // (the engine only refuses a request it will never send: a model that is not allowed)
+      return { why: firstLine(err), permanent: true }
+    }
+  }
+
+  private noteFailure($: Dollar, why: string, permanent: boolean): void {
+    this.translateFailures += 1
+    this.translateRetryAt = this.nowMs + retryDelay(this.translateFailures)
+    if (permanent) this.translateStuck = true
+    if ((permanent || this.translateFailures >= TELL_AFTER) && !this.translateTold) {
+      this.translateTold = true
+      $.ui.toast(t(this.lang, 'tr.failed', { error: why }))
+    }
+  }
+
+  /**
+   * In the background: asks the session's model for the versions the pane lacks (English for every text written in Chinese,
+   * Chinese for English text while the pane reads in Chinese), one request of a few texts at a time, until nothing is wanted.
+   * A model call is long, so none of this holds `exclusive` while it waits; only reading and writing the memory does.
+   * Does nothing when `display.translate` is off. A failure is waited out (30 s, 2 min, 10 min) and the person is told once;
+   * one that will not clear (a model that is not allowed, no credit) ends the attempts for this session.
+   */
+  async translate($: Dollar): Promise<void> {
+    if (!this.ready || this.translatorBusy) return
+    this.translatorBusy = true
+    try {
+      for (let round = 0; round < MAX_TRANSLATE_ROUNDS; round++) {
+        if (this.timer === null) return
+        const owner = await $.state.owner.read()
+        if (owner !== '' && owner !== this.token) return
+        await this.clock($)
+        const off = this.mode === 'off' || this.config?.display.translate === false
+        const wanted = off ? [] : this.wantedTexts(WANT_WINDOW)
+        // (while it keeps failing the pane does not claim to be translating)
+        await this.setTranslating($, this.translateStuck || this.translateFailures >= TELL_AFTER ? 0 : wanted.length)
+        if (wanted.length === 0 || this.translateStuck || this.nowMs < this.translateRetryAt) return
+
+        const ask = nextBatch(wanted)
+        if (ask === null) return
+        // another session, or a teammate's pull, may have brought some of it meanwhile
+        if (await this.exclusive(() => this.syncTm($))) continue
+
+        const outcome = await this.askModel($, requestFor(ask))
+        await this.clock($)
+        if (this.timer === null) return
+        if ('why' in outcome) {
+          this.noteFailure($, outcome.why, outcome.permanent)
+          continue
+        }
+        const read = readReply(ask, outcome.text)
+        if ('problem' in read) {
+          for (const text of ask.texts) this.tries.set(`${ask.to}\0${text}`, (this.tries.get(`${ask.to}\0${text}`) ?? 0) + 1)
+          this.noteFailure($, read.problem, false)
+          continue
+        }
+        for (const text of read.bad) this.tries.set(`${ask.to}\0${text}`, (this.tries.get(`${ask.to}\0${text}`) ?? 0) + 1)
+        if (read.pairs.length === 0) {
+          this.noteFailure($, 'the reply had no usable text', false)
+          continue
+        }
+        await this.exclusive(async () => {
+          await this.tmStore!.append(ask.to, read.pairs, { actor: 'model', via: 'translator' }, this.nowMs)
+          await this.publishTm($)
+        })
+        this.translateFailures = 0
+        this.translateRetryAt = 0
+        this.translateTold = false
+      }
+    } catch {
+      // the next poll tries again
+    } finally {
+      this.translatorBusy = false
     }
   }
 
@@ -608,7 +958,7 @@ export class Runtime {
     if (viewport?.isFullscreen === true) this.isFullscreen = true
   }
 
-  /** Spec 9.1: when the project is on, the screen is fullscreen and autoOpen is true, open once, unasked. */
+  /** When the project is on, the screen is fullscreen and autoOpen is true, open once, unasked. */
   private async maybeAutoOpen($: Dollar): Promise<void> {
     if (this.autoOpened || !this.isFullscreen || this.mode === 'off') return
     if (this.config?.display.autoOpen !== true) return
@@ -729,7 +1079,12 @@ export class Runtime {
       }
       case 'new': {
         const done = await newTree(ctx, op.input)
-        if (done.ok) await this.followConfig($)
+        if (done.ok) {
+          await this.followConfig($)
+          // (a tree that was opened without switching to it is not in the list yet)
+          await this.syncTrees($, TREES_OPEN_MS, true)
+          await this.publish($)
+        }
         return done
       }
     }
@@ -878,13 +1233,13 @@ export class Runtime {
 
   private missing(what: 'status' | 'node' | 'text' | 'title' | 'file' | 'value' | 'name'): string {
     const label: Record<typeof what, [string, string]> = {
-      name: ['a tree name', 'tree 名'],
-      status: ['a status', '状态'],
-      node: ['a node', '节点'],
-      text: ['the text', '文字'],
-      title: ['a title', '标题'],
-      file: ['a file', '文件'],
-      value: ['a value', '取值'],
+      name: ['a tree name', 'tree name'],
+      status: ['a status', 'status'],
+      node: ['a node', 'node'],
+      text: ['the text', 'text'],
+      title: ['a title', 'title'],
+      file: ['a file', 'file'],
+      value: ['a value', 'value'],
     }
     const word = label[what][this.lang === 'zh' ? 1 : 0]
     return t(this.lang, 'c.missingArg', { what: this.lang === 'zh' && /^[A-Za-z]/.test(word) ? ` ${word}` : word, usage: t(this.lang, 'c.usage') })
@@ -911,7 +1266,17 @@ export class Runtime {
       case 'resume':
         return this.setRecording($, cmd.cmd === 'resume')
       case 'lang':
-        return this.setDisplayKey($, { language: cmd.value }, () => t(this.lang, 'c.langSet', { lang: cmd.value }))
+        // what the person types for everybody replaces what the switch chose for themselves
+        return this.setDisplayKey($, { language: cmd.value }, () => t(this.lang, 'c.langSet', { lang: cmd.value }), () => this.unpin($))
+      case 'translate':
+        // (switching it on is also how the person asks it to try again after it gave up)
+        return this.setDisplayKey($, { translate: cmd.value }, () => t(this.lang, cmd.value ? 'c.translateOn' : 'c.translateOff'), async () => {
+          if (cmd.value) this.forgetFailures()
+        })
+      case 'colors':
+        return this.colorsCommand($, cmd.name, false)
+      case 'colors-reset':
+        return this.colorsCommand($, null, true)
       case 'autoopen':
         return this.setDisplayKey($, { autoOpen: cmd.value }, () => t(this.lang, 'c.autoOpenSet', { value: cmd.value ? 'on' : 'off' }))
       case 'edit':
@@ -1037,7 +1402,7 @@ export class Runtime {
   }
 
   /** Changes one `display` setting in config.json; `message` is worded after the change, in the language it leaves. */
-  private async setDisplayKey($: Dollar, patch: Partial<DtConfig['display']>, message: () => string): Promise<string> {
+  private async setDisplayKey($: Dollar, patch: Partial<DtConfig['display']>, message: () => string, before?: () => Promise<void>): Promise<string> {
     return this.exclusive(async () => {
       await this.refreshConfig($)
       if (this.mode === 'off' || this.configText === null) return t(this.lang, 'c.notStarted')
@@ -1052,6 +1417,7 @@ export class Runtime {
         return t(this.lang, 'c.cannotWrite', { error: firstLine(err) })
       }
       await this.readConfig()
+      if (before !== undefined) await before()
       await this.applyMode($)
       return message()
     })
@@ -1061,6 +1427,9 @@ export class Runtime {
   private async editCommand($: Dollar): Promise<string> {
     await this.openPane($, true)
     if (this.mode === 'off') return t(this.lang, 'r.openedPane')
+    // (what is edited is in the tree recorded into: the pane goes back to its mainline)
+    await $.state.ui.update(ui => (ui.view === 'tree' && ui.tree === null ? ui : { ...ui, view: 'tree', tree: null, pick: null, newTree: null }))
+    await this.exclusive(() => this.publish($))
     const id = await this.selectedId($)
     if (id === null) return t(this.lang, 'c.selectFirst')
     await this.startEdit($, id)
@@ -1080,9 +1449,19 @@ export class Runtime {
     return (await this.view($)).sel
   }
 
-  /** Selects a node and opens the way down to it. */
+  /**
+   * Selects a node and opens the way down to it. A node that was just written is in the tree recorded into, so the
+   * pane goes back to the mainline of that tree, from wherever it was (the overview, another tree).
+   */
   async reveal($: Dollar, id: string): Promise<void> {
-    const idx = buildIndex(this.journal!.model())
+    await $.state.ui.update(ui => ({ ...ui, view: 'tree', tree: null, pick: null, newTree: null }))
+    await this.publish($)
+    await this.revealIn($, this.journal!.model(), id)
+  }
+
+  /** Selects a node of the tree the pane shows and opens the way down to it. */
+  private async revealIn($: Dollar, model: DtModel, id: string): Promise<void> {
+    const idx = buildIndex(model)
     const path = revealPath(idx, id)
     await $.state.ui.update(ui => ({
       ...ui,
@@ -1129,6 +1508,15 @@ export class Runtime {
   /** Moves the selection `delta` rows and keeps the focus ring on it. */
   async move($: Dollar, delta: number): Promise<void> {
     await this.clock($)
+    const view = (await $.state.ui.read()).view
+    if (view === 'trees') {
+      await this.movePick($, delta)
+      return
+    }
+    if (view === 'colors') {
+      await this.moveScheme($, delta)
+      return
+    }
     const v = await this.view($)
     if (v.rows.length === 0) return
     const at = Math.max(0, rowIndex(v.rows, v.sel))
@@ -1145,9 +1533,287 @@ export class Runtime {
     await $.state.ui.update(ui => ({ ...ui, showNow: !ui.showNow }))
   }
 
+  // ---- the trees
+
+  /** The tree the highlight of the overview is on. */
+  private pickedOf(ui: DtUi, recorded: string): string {
+    return ui.pick ?? ui.tree ?? recorded
+  }
+
+  /** Looks at a tree (a tab of the strip, the next tree): its mainline in the tree view. A tree the project does not record into is shown read only. */
+  async showTree($: Dollar, tree: string): Promise<void> {
+    await this.ensure($)
+    await this.exclusive(async () => {
+      if (this.mode === 'off' || !this.hasTree(tree)) return
+      await this.syncOther(tree) // (nothing for the tree recorded into: the poll keeps that one)
+      const model = this.journalOf(tree).model()
+      const keeps = (id: string | null): id is string => id !== null && model.nodes.some(n => n.id === id && n.retracted === undefined)
+      await $.state.ui.update(ui => ({
+        ...ui,
+        view: 'tree',
+        tree: tree === this.journal!.tree ? null : tree,
+        pick: null,
+        newTree: null,
+        editing: null,
+        selected: keeps(ui.selected) ? ui.selected : null,
+      }))
+      await this.publish($)
+    })
+  }
+
+  /** The next tree (or the one before) in the order of the tabs. */
+  async cycleTree($: Dollar, by: 1 | -1): Promise<void> {
+    const [trees, ui, project] = await Promise.all([$.state.trees.read(), $.state.ui.read(), $.state.project.read()])
+    if (trees.length < 2) return
+    const at = Math.max(0, trees.findIndex(x => x.name === (ui.tree ?? project.tree)))
+    const next = trees[(at + by + trees.length) % trees.length]
+    if (next !== undefined) await this.showTree($, next.name)
+  }
+
+  /** Opens the overview of the trees, with the highlight on the tree the pane was showing. */
+  async openOverview($: Dollar): Promise<void> {
+    await this.ensure($)
+    if (this.mode === 'off') return
+    await $.state.ui.update(ui => ({ ...ui, view: 'trees', pick: ui.tree ?? this.journal?.tree ?? MAIN, newTree: null, editing: null }))
+    // what the other trees hold now, not what they held at the last poll
+    await this.syncTrees($, TREES_OPEN_MS)
+    await this.exclusive(() => this.publish($))
+    const ui = await $.state.ui.read()
+    if (ui.view === 'trees' && ui.pick !== null) await this.focusKey($, treeKey(ui.pick))
+  }
+
+  /** Back from the overview (or the picker of colours) to the tree. */
+  async back($: Dollar): Promise<void> {
+    const ui = await $.state.ui.read()
+    if (ui.view === 'tree') return
+    await $.state.ui.update(u => ({ ...u, view: 'tree', pick: null, newTree: null }))
+    const id = await this.selectedId($)
+    if (id !== null) await this.focusKey($, id)
+  }
+
+  /** Puts the highlight of the overview on a tree; nothing is written when it is there already. */
+  async pickTree($: Dollar, tree: string): Promise<void> {
+    if ((await $.state.ui.read()).pick === tree) return
+    await $.state.ui.update(u => ({ ...u, pick: tree }))
+  }
+
+  /** The focus ring moved onto a control of the overview (a click, Tab): the highlight follows it. */
+  async focusedControl($: Dollar, key: string): Promise<void> {
+    const scheme = schemeOfKey(key)
+    if (scheme !== null) {
+      if ((await $.state.ui.read()).view === 'colors') await this.pickScheme($, scheme)
+      return
+    }
+    const target = treeOfKey(key)
+    if (target === null || (await $.state.ui.read()).view !== 'trees') return
+    await this.pickTree($, target.tree)
+  }
+
+  /** Moves the highlight of the overview `delta` trees and keeps the focus ring on it. */
+  private async movePick($: Dollar, delta: number): Promise<void> {
+    const [trees, ui, project] = await Promise.all([$.state.trees.read(), $.state.ui.read(), $.state.project.read()])
+    if (trees.length === 0) return
+    const at = trees.findIndex(x => x.name === this.pickedOf(ui, project.tree))
+    const next = trees[Math.min(trees.length - 1, Math.max(0, (at < 0 ? 0 : at) + delta))]!
+    await this.pickTree($, next.name)
+    await this.focusKey($, treeKey(next.name))
+  }
+
+  /** A press on a line of the overview: the first press highlights the tree, the next one (on the tree highlighted) opens it. */
+  async pressTree($: Dollar, tree: string, step: string | null): Promise<void> {
+    const ui = await $.state.ui.read()
+    // (while the form for a new tree is open a press only says which tree it opens from)
+    if (ui.newTree !== null || ui.pick !== tree) {
+      await this.pickTree($, tree)
+      return
+    }
+    await this.openTree($, tree, step)
+  }
+
+  /** Opens the tree highlighted in the overview (Enter on its line does the same). */
+  async openPicked($: Dollar): Promise<void> {
+    const [ui, project] = await Promise.all([$.state.ui.read(), $.state.project.read()])
+    if (ui.view !== 'trees') return
+    await this.openTree($, this.pickedOf(ui, project.tree), null)
+  }
+
+  /** Shows a tree in the tree view, with a step of its mainline selected when one is named. */
+  private async openTree($: Dollar, tree: string, step: string | null): Promise<void> {
+    await this.showTree($, tree)
+    const ui = await $.state.ui.read()
+    if (ui.view !== 'tree' || (ui.tree ?? this.journal?.tree) !== tree) return // (the tree is gone)
+    const model = this.journalOf(tree).model()
+    if (step !== null && model.nodes.some(n => n.id === step && n.retracted === undefined)) await this.revealIn($, model, step)
+    const id = await this.selectedId($)
+    if (id !== null) await this.focusKey($, id)
+  }
+
+  /** `r` in the overview: record into the tree highlighted (the project switches to it, for every session). It works while recording is paused, as `/decide tree use` does. */
+  async recordPicked($: Dollar): Promise<void> {
+    await this.ensure($)
+    const [ui, project] = await Promise.all([$.state.ui.read(), $.state.project.read()])
+    if (ui.view !== 'trees') return
+    $.ui.toast(await this.treeCommand2($, { kind: 'use', name: this.pickedOf(ui, project.tree) }))
+  }
+
+  // ---- colours
+
+  /** The scheme the person chose (kept for every project), or the default one. */
+  private async readScheme($: Dollar): Promise<string> {
+    const stored = await $.store.get(SCHEME_STORE_KEY).catch(() => undefined)
+    return (typeof stored === 'string' ? findScheme(stored) : undefined)?.id ?? DEFAULT_SCHEME
+  }
+
+  /** Another session may have chosen another scheme: follow it. */
+  private async syncScheme($: Dollar): Promise<void> {
+    const id = await this.readScheme($)
+    if (id === this.scheme) return
+    this.scheme = id
+    await $.state.scheme.update(() => id)
+  }
+
+  /** Keeps a scheme for every project and every session, and draws the pane in it. */
+  private async chooseScheme($: Dollar, id: string): Promise<void> {
+    const scheme = schemeOf(id)
+    this.scheme = scheme.id
+    // (the default is kept as nothing: a later version that changes the default changes it for those who never chose)
+    await $.store.set(SCHEME_STORE_KEY, scheme.id === DEFAULT_SCHEME ? '' : scheme.id).catch(() => undefined)
+    await $.state.scheme.update(() => scheme.id)
+  }
+
+  /** `c`: the picker of colours, with the highlight on the scheme in use. */
+  async openColors($: Dollar): Promise<void> {
+    await this.ensure($)
+    await $.state.ui.update(ui => ({ ...ui, view: 'colors', pick: this.scheme, newTree: null, editing: null }))
+    await this.focusKey($, schemeKey(this.scheme))
+  }
+
+  /** Puts the highlight of the picker on a scheme (the pane is drawn in it); nothing is written when it is there already. */
+  async pickScheme($: Dollar, id: string): Promise<void> {
+    const scheme = findScheme(id)
+    if (scheme === undefined || (await $.state.ui.read()).pick === scheme.id) return
+    await $.state.ui.update(ui => ({ ...ui, pick: scheme.id }))
+  }
+
+  /** Moves the highlight of the picker `delta` schemes (it stops at either end) and keeps the focus ring on it. */
+  private async moveScheme($: Dollar, delta: number): Promise<void> {
+    const ui = await $.state.ui.read()
+    const at = Math.max(0, SCHEMES.findIndex(s => s.id === (ui.pick ?? this.scheme)))
+    const next = SCHEMES[Math.min(SCHEMES.length - 1, Math.max(0, at + delta))]!
+    await this.pickScheme($, next.id)
+    await this.focusKey($, schemeKey(next.id))
+  }
+
+  /** A press on a line of the picker: the first press highlights the scheme, the next one on the scheme highlighted keeps it. */
+  async pressScheme($: Dollar, id: string): Promise<void> {
+    const ui = await $.state.ui.read()
+    if (ui.view !== 'colors') return
+    if (ui.pick !== id) {
+      await this.pickScheme($, id)
+      return
+    }
+    await this.useHighlighted($)
+  }
+
+  /** `⏎: use`: keeps the scheme highlighted, for every project, and goes back to the tree. */
+  async useHighlighted($: Dollar): Promise<void> {
+    await this.ensure($)
+    const ui = await $.state.ui.read()
+    if (ui.view !== 'colors') return
+    const scheme = (ui.pick !== null ? findScheme(ui.pick) : undefined) ?? schemeOf(this.scheme)
+    await this.chooseScheme($, scheme.id)
+    $.ui.toast(t(this.lang, 'c.colorsSet', { name: scheme.name }))
+    await this.back($)
+  }
+
+  /** `r` in the picker: the default scheme, and back to the tree. */
+  async resetColors($: Dollar): Promise<void> {
+    await this.ensure($)
+    if ((await $.state.ui.read()).view !== 'colors') return
+    await this.chooseScheme($, DEFAULT_SCHEME)
+    $.ui.toast(t(this.lang, 'c.colorsReset', { name: schemeOf(DEFAULT_SCHEME).name }))
+    await this.back($)
+  }
+
+  /** `/decide colors [name|reset]`: which scheme is in use, or choose one. It applies to every project, and needs none. */
+  private async colorsCommand($: Dollar, name: string | null, reset: boolean): Promise<string> {
+    const list = SCHEMES.map(s => s.name).join(', ')
+    if (reset) {
+      await this.chooseScheme($, DEFAULT_SCHEME)
+      return t(this.lang, 'c.colorsReset', { name: schemeOf(DEFAULT_SCHEME).name })
+    }
+    if (name === null) return t(this.lang, 'c.colorsNow', { name: schemeOf(this.scheme).name, list })
+    const scheme = findScheme(name)
+    if (scheme === undefined) return t(this.lang, 'c.colorsUnknown', { name, list })
+    await this.chooseScheme($, scheme.id)
+    return t(this.lang, 'c.colorsSet', { name: scheme.name })
+  }
+
+  // ---- a new tree
+
+  /** `n` in the overview: the form for a new tree, opened from the tree highlighted. */
+  async openNewTree($: Dollar): Promise<void> {
+    await this.ensure($)
+    if (this.mode === 'off') return
+    await $.state.ui.update(ui => ({ ...ui, newTree: ui.newTree ?? { name: '', at: '', title: '', error: null }, editing: null }))
+    await this.focusKey($, NEW_KEYS.name)
+  }
+
+  async newTreeField($: Dollar, field: 'name' | 'at' | 'title', value: string): Promise<void> {
+    await $.state.ui.update(ui => (ui.newTree === null ? ui : { ...ui, newTree: { ...ui.newTree, [field]: value, error: null } }))
+  }
+
+  async cancelNewTree($: Dollar): Promise<void> {
+    const ui = await $.state.ui.read()
+    if (ui.newTree === null) return
+    await $.state.ui.update(u => (u.newTree === null ? u : { ...u, newTree: null }))
+    if (ui.pick !== null) await this.focusKey($, treeKey(ui.pick))
+  }
+
+  /**
+   * Opens the tree the form describes: a copy of the tree highlighted in the overview, up to the version written
+   * (as it is now when none is), and the project records into it from then on. `typed` is the text of the field
+   * Enter was pressed in, which may be newer than the state's copy. What went wrong is told in the form.
+   */
+  async createTree($: Dollar, typed?: Partial<Pick<DtNewTree, 'name' | 'at' | 'title'>>): Promise<void> {
+    await this.ensure($)
+    const [ui, project] = await Promise.all([$.state.ui.read(), $.state.project.read()])
+    if (ui.newTree === null) return
+    const form: DtNewTree = { ...ui.newTree, ...typed }
+    const from = this.pickedOf(ui, project.tree)
+    const done = await this.exclusive(async (): Promise<Done> => {
+      await this.refreshConfig($)
+      if (this.mode === 'off') return { ok: false, error: t(this.lang, 'c.notStarted') }
+      const at = form.at.trim()
+      const title = form.title.trim()
+      const input: NewTreeInput = { name: form.name, from, ...(at !== '' ? { at } : {}), ...(title !== '' ? { title } : {}) }
+      return this.treeOp($, await this.ctx($, 'user'), { kind: 'new', input })
+    }, TREE_TIMEOUT_MS)
+    if (!done.ok) {
+      await $.state.ui.update(u => (u.newTree === null ? u : { ...u, newTree: { ...form, error: firstLine(done.error) } }))
+      await this.focusKey($, NEW_KEYS.name)
+      return
+    }
+    // opened, and recorded into from now on: look at it
+    await $.state.ui.update(u => ({ ...u, view: 'tree', tree: null, pick: null, newTree: null, editing: null, selected: null }))
+    await this.exclusive(() => this.publish($))
+    $.ui.toast(this.mode === 'paused' ? `${done.text} ${t(this.lang, 'tree.pausedNote')}` : done.text)
+  }
+
   // ---- editing
 
+  /** The name of the tree the pane shows when it is not the one recorded into (where an edit would be written), else null. */
+  private async readOnlyTree($: Dollar): Promise<string | null> {
+    const ui = await $.state.ui.read()
+    return ui.tree !== null && ui.tree !== this.journal?.tree ? ui.tree : null
+  }
+
   async startEdit($: Dollar, id?: string): Promise<void> {
+    const other = await this.readOnlyTree($)
+    if (other !== null) {
+      $.ui.toast(t(this.lang, 'edit.readOnly', { tree: other }))
+      return
+    }
     const v = await this.view($)
     const target = id ?? v.sel
     const node = target === null ? undefined : v.idx.byId.get(target)
@@ -1185,6 +1851,13 @@ export class Runtime {
     const edit = typed === undefined ? ui.editing : { ...ui.editing, summary: typed.summary }
     if (this.mode === 'off') {
       await this.cancelEdit($)
+      return
+    }
+    // (an edit is written to the tree recorded into: it is not offered on any other, and is not saved on one)
+    const other = await this.readOnlyTree($)
+    if (other !== null) {
+      await this.cancelEdit($)
+      $.ui.toast(t(this.lang, 'edit.readOnly', { tree: other }))
       return
     }
     const message = await this.exclusive(async () => {

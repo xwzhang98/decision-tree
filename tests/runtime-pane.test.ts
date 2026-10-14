@@ -16,17 +16,17 @@ async function tree() {
   const b = await boot()
   const { rt, p } = b
   await rt.command(p, 'decide', 'start orders')
-  await rt.command(p, 'decide', 'add Build version v2.2 --id build-v22 --status adopted --trunk')
-  await rt.command(p, 'decide', 'add Pool size absolute --id pool-abs --parent build-v22 --status adopted')
-  await rt.command(p, 'decide', 'add Pool size ratio --id pool-ratio --parent build-v22 --status rejected')
-  await rt.command(p, 'decide', 'add Run seed 1 --id run-s1 --parent pool-abs --status planned')
+  await rt.command(p, 'decide', 'add Merge rule v1.2 --id merge-rule --status adopted --trunk')
+  await rt.command(p, 'decide', 'add Window size absolute --id window-abs --parent merge-rule --status adopted')
+  await rt.command(p, 'decide', 'add Window size ratio --id window-ratio --parent merge-rule --status rejected')
+  await rt.command(p, 'decide', 'add Run batch 1 --id run-s1 --parent window-abs --status planned')
   return b
 }
 
 const SAMPLE = JSON.stringify({
   updatedAt: '2026-10-10T08:00:00Z',
-  lanes: [{ name: 'ZETA', run: 'gateway s0', state: 'running', step: 3400, total: 4000, eta: '23:50' }],
-  next: [{ text: 'gate → probe s1', eta: '06:15' }],
+  lanes: [{ name: 'ALPHA', run: 'sync-bench s0', state: 'running', step: 1700, total: 2000, eta: '18:40' }],
+  next: [{ text: 'check → restore-test s1', eta: '05:05' }],
   warnings: [],
 })
 
@@ -34,23 +34,23 @@ const SAMPLE = JSON.stringify({
 
 test('select: choosing the node that is already selected writes nothing', async () => {
   const { rt, engine, p } = await tree()
-  await rt.select(p, 'pool-abs')
+  await rt.select(p, 'window-abs')
   const writes = engine.writes.length
-  await rt.select(p, 'pool-abs')
+  await rt.select(p, 'window-abs')
   expect(engine.writes).toHaveLength(writes)
-  expect(engine.cells.ui.selected).toBe('pool-abs')
+  expect(engine.cells.ui.selected).toBe('window-abs')
 })
 
 test('press: the first press selects, the next on the same row opens or closes its children', async () => {
   const { rt, engine, p } = await tree()
-  await rt.press(p, 'build-v22')
-  expect(engine.cells.ui.selected).toBe('build-v22')
+  await rt.press(p, 'merge-rule')
+  expect(engine.cells.ui.selected).toBe('merge-rule')
   const before = engine.cells.ui
-  await rt.press(p, 'build-v22')
+  await rt.press(p, 'merge-rule')
   const afterOne = engine.cells.ui
-  expect(afterOne.expanded.includes('build-v22') !== before.expanded.includes('build-v22') || afterOne.collapsed.includes('build-v22') !== before.collapsed.includes('build-v22')).toBe(true)
-  await rt.press(p, 'build-v22')
-  expect(engine.cells.ui.expanded.includes('build-v22')).toBe(before.expanded.includes('build-v22'))
+  expect(afterOne.expanded.includes('merge-rule') !== before.expanded.includes('merge-rule') || afterOne.collapsed.includes('merge-rule') !== before.collapsed.includes('merge-rule')).toBe(true)
+  await rt.press(p, 'merge-rule')
+  expect(engine.cells.ui.expanded.includes('merge-rule')).toBe(before.expanded.includes('merge-rule'))
   // a leaf has nothing to open: selecting is all a press does
   await rt.press(p, 'run-s1')
   const ui = engine.cells.ui
@@ -60,13 +60,13 @@ test('press: the first press selects, the next on the same row opens or closes i
 
 test('move: the selection steps through the visible rows and the focus ring follows', async () => {
   const { rt, engine, p } = await tree()
-  await rt.reveal(p, 'build-v22')
+  await rt.reveal(p, 'merge-rule')
   await rt.move(p, 1)
   const first = engine.cells.ui.selected
-  expect(first).not.toBe('build-v22')
+  expect(first).not.toBe('merge-rule')
   expect(engine.focuses.at(-1)).toEqual({ requestId: 'decision-tree', key: first })
   await rt.move(p, -1)
-  expect(engine.cells.ui.selected).toBe('build-v22')
+  expect(engine.cells.ui.selected).toBe('merge-rule')
   // past either end it stays on the end
   await rt.move(p, -50)
   const top = engine.cells.ui.selected
@@ -141,10 +141,10 @@ test('edit: saving nothing new says so and writes no event; cancelling writes no
 test('edit: selecting another node closes a form left open; a retracted node cannot be edited', async () => {
   const { rt, engine, p } = await tree()
   await rt.startEdit(p, 'run-s1')
-  await rt.select(p, 'pool-abs')
+  await rt.select(p, 'window-abs')
   expect(engine.cells.ui.editing).toBeNull()
-  await rt.command(p, 'decide', 'retract pool-ratio wrong run')
-  await rt.startEdit(p, 'pool-ratio')
+  await rt.command(p, 'decide', 'retract window-ratio wrong run')
+  await rt.startEdit(p, 'window-ratio')
   expect(engine.cells.ui.editing).toBeNull()
 })
 
@@ -176,8 +176,8 @@ test('prompt: the section holds still during a turn and catches up when the next
   const { rt, p } = await tree()
   await rt.onTurnStart(p)
   const first = rt.section()?.text ?? ''
-  expect(first).toContain('build-v22')
-  await rt.toolCall(p, 'decision_record', { title: 'Brand new decision', parent: 'build-v22', status: 'adopted' })
+  expect(first).toContain('merge-rule')
+  await rt.toolCall(p, 'decision_record', { title: 'Brand new decision', parent: 'merge-rule', status: 'adopted' })
   expect(rt.section()?.text).toBe(first)
   await rt.onTurnStart(p)
   expect(rt.section()?.text).not.toBe(first)
@@ -258,7 +258,7 @@ test('status: a new command waits for the person; nothing runs until Allow is pr
   const ran = engine.runs.filter(r => r.argv[0] === 'bash')
   expect(ran).toHaveLength(1)
   expect(ran[0]?.init).toMatchObject({ cwd: ROOT, timeoutMs: 15_000 })
-  expect(engine.cells.now.data?.lanes[0]).toMatchObject({ name: 'ZETA', step: 3400, total: 4000 })
+  expect(engine.cells.now.data?.lanes[0]).toMatchObject({ name: 'ALPHA', step: 1700, total: 2000 })
   expect(engine.cells.now.error).toBeNull()
   expect(engine.cells.now.fetchedAt).not.toBeNull()
 })
@@ -409,7 +409,7 @@ test('status: the answer of a command that config.json no longer holds is droppe
   await rt.approveStatus(p, engine.cells.now.argv)
   expect(ran(NEW)).toBe(1)
   expect(engine.cells.now).toMatchObject({ approval: 'approved', argv: NEW, error: null })
-  expect(engine.cells.now.data?.lanes[0]?.name).toBe('ZETA')
+  expect(engine.cells.now.data?.lanes[0]?.name).toBe('ALPHA')
 })
 
 test('status: Allow approves the command the person read; if config.json moved on, nothing is allowed and they are told', async () => {
@@ -447,7 +447,7 @@ test('status: Allow approves the command the person read; if config.json moved o
   // a late press from a pane that still showed the old command changes nothing, and the person is told in the language of the pane
   await rt.onPrompt(p, '为什么没有运行')
   await rt.approveStatus(p, ['bash', 'scripts/status.sh'])
-  expect(engine.toasts.at(-1)?.text).toBe('config.json 里的状态命令变了。请先看新的命令，再决定是否允许。')
+  expect(engine.toasts.at(-1)?.text).toBe('config.json 里的 status 命令变了。请先看新的命令，再决定是否允许。')
   expect(engine.store.get(key)).toBe(approvalHash(ROOT, ['bash', 'scripts/other.sh']))
   expect(bash()).toBe(1)
 })
@@ -485,7 +485,7 @@ test('status: before every run the shown command, the config and the stored OK h
   await rt.maybeRunStatus(p, true)
   expect(bash()).toBe(4)
   expect(engine.runs.filter(r => r.argv[0] === 'bash').every(r => r.argv.join(' ') === 'bash scripts/status.sh')).toBe(true)
-  expect(engine.cells.now.data?.lanes[0]?.name).toBe('ZETA')
+  expect(engine.cells.now.data?.lanes[0]?.name).toBe('ALPHA')
 })
 
 test('status: /tree runs it at once when it is approved', async () => {
@@ -501,11 +501,12 @@ test('status: /tree runs it at once when it is approved', async () => {
 
 // ---------------------------------------------------------------- a /clear wipes the session's state
 
-import { EMPTY_MODEL, EMPTY_NOW, EMPTY_PROJECT, EMPTY_UI } from '../lib/state'
+import { DEFAULT_SCHEME } from '../lib/palettes'
+import { EMPTY_MODEL, EMPTY_NOW, EMPTY_PROJECT, EMPTY_TM, EMPTY_TREES, EMPTY_UI } from '../lib/state'
 
 /** What the engine does to `$.state` when a /clear starts the session over: everything back to its first value. */
 function wipe(engine: FakeEngine) {
-  engine.cells = { model: EMPTY_MODEL, project: EMPTY_PROJECT, ui: EMPTY_UI, lang: 'en', now: EMPTY_NOW, owner: '' }
+  engine.cells = { model: EMPTY_MODEL, project: EMPTY_PROJECT, ui: EMPTY_UI, lang: 'en', now: EMPTY_NOW, tm: EMPTY_TM, trees: EMPTY_TREES, scheme: DEFAULT_SCHEME, translating: 0, owner: '' }
 }
 
 test('clear: the next poll writes the state again, and the poll goes on', async () => {
@@ -538,8 +539,8 @@ test('clear: the first thing that happens after it repairs the state at once, wi
   expect(engine.cells.model.nodes.length).toBeGreaterThan(0)
 
   wipe(engine)
-  const said = await rt.command(p, 'decide', 'note build-v22 after the clear')
-  expect(said).toBe('Noted on build-v22')
+  const said = await rt.command(p, 'decide', 'note merge-rule after the clear')
+  expect(said).toBe('Noted on merge-rule')
   expect(engine.cells.project.mode).toBe('recording')
 
   wipe(engine)
@@ -567,7 +568,7 @@ test('clear: what the person had approved stays approved, and the status command
   await engine.advance(5000)
   expect(engine.cells.now.approval).toBe('approved')
   expect(runs()).toBe(2)
-  expect(engine.cells.now.data?.lanes[0]?.name).toBe('ZETA')
+  expect(engine.cells.now.data?.lanes[0]?.name).toBe('ALPHA')
 })
 
 test('clear: events after it carry the new conversation\'s session id', async () => {
@@ -575,7 +576,7 @@ test('clear: events after it carry the new conversation\'s session id', async ()
   engine.sessionId = '99aa11bb22cc33dd'
   wipe(engine)
   await engine.advance(5000)
-  await rt.command(p, 'decide', 'note build-v22 written after the clear')
+  await rt.command(p, 'decide', 'note merge-rule written after the clear')
   expect(eventsOf(engine).at(-1)).toMatchObject({ op: 'note', session: '99aa11' })
 })
 

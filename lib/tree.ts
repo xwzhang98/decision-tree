@@ -1,7 +1,7 @@
 // The tree as the pane draws it: an index over the replayed nodes, the filters,
 // the default expansion, the flattened rows, the window over them, and node lookup.
 
-import type { DtFilter, DtModel, DtNode, DtUi } from '../types'
+import type { DtFilter, DtModel, DtNode, DtStatus, DtUi } from '../types'
 import { PENDING_STATUSES, parseTime } from './events'
 
 export type TreeIndex = {
@@ -104,14 +104,34 @@ export function resolveRef(idx: TreeIndex, ref: string): Resolved {
 
 // ---------------------------------------------------------------- rows
 
+/** What the rail needs to know about a row to draw its part of the line. */
+export type RailMark = {
+  /** The row is a step of the mainline (its dot sits on the rail), not a branch hanging from one. */
+  step: boolean
+  /** The step is the newest one adopted: the head of the rail. */
+  head: boolean
+  /** The rail below leads to a step that is not done yet. */
+  ahead: boolean
+  /** The step is the last one: the rail ends with it. */
+  end: boolean
+  /** A branch that is the last to hang directly from its step. */
+  lastBranch: boolean
+  /** More rows of the same step's branches follow this one. */
+  more: boolean
+}
+
 export type Row = {
   node: DtNode
+  /** 0 for a step of the mainline; for a branch, how far below its step it hangs (1 and up). */
   depth: number
-  /** Children that pass the filter. */
+  /** The step (its index among the steps drawn) the row belongs to. */
+  step: number
+  /** Children that pass the filter and hang from this row (the steps that follow a step are not among them). */
   childCount: number
-  /** Children not drawn because this node is collapsed. */
+  /** Rows not drawn because this node is collapsed. */
   hiddenKids: number
   isExpanded: boolean
+  rail: RailMark
 }
 
 export type RowOptions = {
@@ -161,7 +181,29 @@ function defaultExpanded(idx: TreeIndex, show: ReadonlySet<string>, nowMs: numbe
   return open
 }
 
-/** Flattens the tree into the rows to draw, in order. */
+/** What the rail leads towards: a step of the mainline that is not done yet. */
+const AHEAD: readonly DtStatus[] = ['planned', 'in-progress', 'proposed']
+
+const byTime = (idx: TreeIndex) => (a: DtNode, b: DtNode) => sortTime(a) - sortTime(b) || idx.order.get(a.id)! - idx.order.get(b.id)!
+
+/** Whether the node is a step of the mainline: marked as trunk, or a root (every tree starts somewhere). */
+function isStepNode(idx: TreeIndex, n: DtNode): boolean {
+  return n.trunk === true || idx.parentOf.get(n.id) === null
+}
+
+/**
+ * The steps of the mainline: the trunk nodes and the roots, in the order they were decided. A tree with
+ * nothing marked as trunk has its roots for steps, and everything else hangs from them.
+ */
+export function stepNodes(idx: TreeIndex, include: (n: DtNode) => boolean = n => n.retracted === undefined): DtNode[] {
+  return idx.nodes.filter(n => include(n) && isStepNode(idx, n)).sort(byTime(idx))
+}
+
+/**
+ * Flattens the tree into the rows of the rail, in order: a step of the mainline, the branches that hang
+ * from it (what was tried there, in the order it was decided), then the next step. A branch hangs from
+ * the nearest step above it in the tree.
+ */
 export function visibleRows(idx: TreeIndex, opts: RowOptions): Row[] {
   const { filter } = opts.ui
   const show = visibleSet(idx, filter)
@@ -169,30 +211,63 @@ export function visibleRows(idx: TreeIndex, opts: RowOptions): Row[] {
   const open = defaultExpanded(idx, show, opts.nowMs)
   const userOpen = new Set(opts.ui.expanded)
   const userShut = new Set(opts.ui.collapsed)
-  const rows: Row[] = []
+
+  const steps = stepNodes(idx, n => show.has(n.id))
+  const stepIds = new Set(steps.map(n => n.id))
+  const head = steps.reduce((at, n, k) => (n.status === 'adopted' ? k : at), -1)
 
   const isOpen = (id: string): boolean => {
     if (forceOpen) return true
     if (userShut.has(id)) return false
     if (userOpen.has(id)) return true
-    return open.has(id)
+    return open.has(id) || stepIds.has(id)
   }
+  /** The nodes hanging directly from a node: they pass the filter and are not steps themselves. */
+  const hanging = (id: string): DtNode[] => (idx.children.get(id) ?? []).filter(k => show.has(k.id) && !stepIds.has(k.id))
+  const folded = (id: string): number => hanging(id).reduce((sum, k) => sum + 1 + folded(k.id), 0)
 
-  const walk = (parent: string | null, depth: number): void => {
-    for (const node of (idx.children.get(parent) ?? []).filter(k => show.has(k.id))) {
-      const sub = (idx.children.get(node.id) ?? []).filter(k => show.has(k.id))
-      const expanded = sub.length > 0 && isOpen(node.id)
-      rows.push({
-        node,
-        depth,
-        childCount: sub.length,
-        hiddenKids: sub.length > 0 && !expanded ? sub.length : 0,
-        isExpanded: expanded,
-      })
-      if (expanded) walk(node.id, depth + 1)
+  const rows: Row[] = []
+  steps.forEach((node, k) => {
+    const sub = hanging(node.id)
+    const expanded = sub.length > 0 && isOpen(node.id)
+    const next = steps[k + 1]
+    rows.push({
+      node,
+      depth: 0,
+      step: k,
+      childCount: sub.length,
+      hiddenKids: sub.length > 0 && !expanded ? folded(node.id) : 0,
+      isExpanded: expanded,
+      rail: { step: true, head: k === head, ahead: next !== undefined && AHEAD.includes(next.status), end: next === undefined, lastBranch: false, more: false },
+    })
+    if (!expanded) return
+    const first = rows.length
+    const walk = (parent: string, depth: number): void => {
+      for (const child of hanging(parent)) {
+        const below = hanging(child.id)
+        const opened = below.length > 0 && isOpen(child.id)
+        rows.push({
+          node: child,
+          depth,
+          step: k,
+          childCount: below.length,
+          hiddenKids: below.length > 0 && !opened ? folded(child.id) : 0,
+          isExpanded: opened,
+          rail: { step: false, head: false, ahead: next !== undefined && AHEAD.includes(next.status), end: next === undefined, lastBranch: false, more: false },
+        })
+        if (opened) walk(child.id, depth + 1)
+      }
     }
-  }
-  walk(null, 0)
+    walk(node.id, 1)
+    // which branch is the last of its step, and which rows have more after them
+    let lastDirect = -1
+    for (let i = first; i < rows.length; i++) if (rows[i]!.depth === 1) lastDirect = i
+    for (let i = first; i < rows.length; i++) {
+      const mark = rows[i]!.rail
+      mark.lastBranch = i === lastDirect
+      mark.more = i < rows.length - 1
+    }
+  })
   return rows
 }
 

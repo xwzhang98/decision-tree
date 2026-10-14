@@ -43,12 +43,62 @@ export function isQuiet(status: DtStatus): boolean {
 }
 
 export const RULE = { unicode: '─', ascii: '-' } as const
-export const BAR = { unicode: '█', ascii: '#' } as const
-export const MAINLINE_SEP = { unicode: ' › ', ascii: ' > ' } as const
 
-/** What the first column of a row can hold: the mainline's spine, the selection's bar, the recording dot. */
+/** The rail: the mainline drawn as the spine of a graph, with what was tried hanging off it. */
+export const RAIL = {
+  /** A step of the mainline; the head is the newest one adopted, a hollow one is still ahead. */
+  step: { unicode: '●', ascii: '*' },
+  head: { unicode: '◉', ascii: '@' },
+  ahead: { unicode: '○', ascii: 'o' },
+  /** The spine between two steps, solid once it is done and dashed where it leads on to a step still ahead. */
+  solid: { unicode: '┃', ascii: '|' },
+  dashed: { unicode: '╏', ascii: ':' },
+  /** Where a branch leaves the spine, and the last one (the spine ends there when the step is the last). */
+  fork: { unicode: '┠', ascii: '|' },
+  forkEnd: { unicode: '┖', ascii: '`' },
+  /** A branch of a branch. */
+  elbow: { unicode: '╰', ascii: '`' },
+  dash: { unicode: '─', ascii: '-' },
+  /** Changed in the last 24 hours. */
+  recent: { unicode: '•', ascii: '*' },
+} as const
+
+/** The lines that join the lane of a tree to the lane it was opened from, in the overview's graph. */
+export const GRAPH = {
+  across: { unicode: '━', ascii: '-' },
+  /** Where a joining line turns down into its lane. */
+  corner: { unicode: '┓', ascii: '+' },
+  /** Where two lanes were opened from one step, the nearer one turns down. */
+  tee: { unicode: '┳', ascii: '+' },
+  /** A joining line passing over a lane. */
+  cross: { unicode: '╋', ascii: '+' },
+} as const
+
+/** The box the details (and the other framed parts) sit in. */
+export const FRAME = {
+  tl: { unicode: '╭', ascii: '+' },
+  tr: { unicode: '╮', ascii: '+' },
+  bl: { unicode: '╰', ascii: '+' },
+  br: { unicode: '╯', ascii: '+' },
+  h: { unicode: '─', ascii: '-' },
+  v: { unicode: '│', ascii: '|' },
+} as const
+
+/** Pick the unicode or the ascii form of a glyph pair. */
+export function pick(pair: { readonly unicode: string; readonly ascii: string }, ascii: boolean): string {
+  return ascii ? pair.ascii : pair.unicode
+}
+
+/** One colour per tree, in the order the trees are listed (the first is the mainline's). Statuses keep red and green to themselves. */
+export const LANE_COLOURS = ['merged', 'planMode', 'claude', 'ide', 'warning', 'success'] as const
+
+export function laneColour(position: number): string {
+  return LANE_COLOURS[((position % LANE_COLOURS.length) + LANE_COLOURS.length) % LANE_COLOURS.length]!
+}
+export const BAR = { unicode: '█', ascii: '#' } as const
+
+/** What the first column of a row can hold: the selection's bar, the recording dot. */
 export const MARKS = {
-  spine: { unicode: '▎', ascii: '|' },
   bar: { unicode: '▌', ascii: '>' },
   dot: { unicode: '●', ascii: '*' },
 } as const

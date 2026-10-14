@@ -41,7 +41,7 @@ export type El = { type?: string; props?: Record<string, unknown>; children?: un
 
 const isEl = (x: unknown): x is El => x !== null && typeof x === 'object'
 
-/** Everything an element shows, joined. */
+/** Everything an element shows, joined. A button with a hotkey is drawn by the engine as `key: label`, and so it reads here. */
 export function textOf(x: unknown): string {
   if (typeof x === 'string') return x
   if (!isEl(x)) return ''
@@ -58,8 +58,10 @@ export function textOf(x: unknown): string {
       const chosen = options.find(o => o.value === props.value)
       return `${typeof props.label === 'string' ? props.label : ''}${chosen?.label ?? ''}`
     }
-    case 'Button':
-      return kids.length === 0 && typeof props.label === 'string' ? props.label : kids.map(textOf).join('')
+    case 'Button': {
+      const label = kids.length === 0 && typeof props.label === 'string' ? props.label : kids.map(textOf).join('')
+      return props.plain === true && typeof props.hotkey === 'string' ? `${props.hotkey}: ${label}` : label
+    }
     default:
       return kids.map(textOf).join('')
   }
@@ -138,29 +140,6 @@ export function runsOf(x: unknown): Run[] {
 export function rowKeys(tree: unknown): string[] {
   return keysOf(tree, 'Button').filter(k => !k.startsWith('~'))
 }
-
-/** The tree of the reference sketch (spec 9.2): trunk, rejected branches, open work. */
-export const SKETCH: SeedNode[] = [
-  { id: 'design-v2', title: 'design v2 定稿', trunk: true, kind: 'milestone', decidedBy: 'user', decidedAt: '2026-10-08T12:00:00Z' },
-  { id: 'pooling-only-2', title: '连接只走池化（exp-2）', parent: 'design-v2', trunk: true, decidedBy: 'user', decidedAt: '2026-10-09T12:00:00Z' },
-  { id: 'pool-32', title: 'pool 数维持 32', parent: 'pooling-only-2', status: 'no-diff', decidedAt: '2026-10-09T12:00:00Z' },
-  { id: 'v21-abs-size', title: 'v2.1：池的大小用绝对值', parent: 'pooling-only-2', status: 'rejected', decidedBy: 'gate', decidedAt: '2026-10-09T12:00:00Z' },
-  { id: 'v21-run-a', title: 'seed 0 重跑', parent: 'v21-abs-size', status: 'rejected' },
-  { id: 'dbpool-adopted', title: '连接池采用', parent: 'pooling-only-2', trunk: true, decidedBy: 'gate', decidedAt: '2026-10-09T12:00:00Z' },
-  {
-    id: 'v22-adopted',
-    title: '构建版本定为 v2.2',
-    parent: 'design-v2',
-    trunk: true,
-    decidedBy: 'user',
-    summary: '池的大小、线程、队列全部用比例，加 GC 比例。',
-    evidence: [{ label: 'v22 s0 预热后', value: 'P99 suite 内 −12.6%', ci: '[−15.1, −10.4]', run: 'v22_s0' }],
-    sources: ['reports/design_v22_20261009/SPEC_V22.md'],
-  },
-  { id: 'deep-skip', title: 'deep_skip 撤回', parent: 'v22-adopted', status: 'withdrawn' },
-  { id: 'gateway', title: '2 hops 简化为 gateway', parent: 'design-v2', status: 'in-progress', trunk: true },
-  { id: 'proxies1', title: '3 proxies 换成一个 distributed cache', parent: 'gateway', status: 'planned' },
-]
 
 /** `count` decisions under one root, for a tree longer than any pane. */
 export function manyNodes(count: number): SeedNode[] {

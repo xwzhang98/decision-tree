@@ -12,7 +12,7 @@ export function defaultConfig(title: string, startedAt: string): DtConfig {
     title,
     startedAt,
     recording: true,
-    display: { asciiGlyphs: false, autoOpen: true, language: 'auto' },
+    display: { asciiGlyphs: false, autoOpen: true, language: 'auto', translate: true },
   }
 }
 
@@ -73,6 +73,7 @@ export function parseConfig(text: string): { config: DtConfig } | { error: strin
       asciiGlyphs: d.asciiGlyphs === true,
       autoOpen: d.autoOpen !== false,
       language,
+      translate: d.translate !== false,
     },
   }
   return { config }

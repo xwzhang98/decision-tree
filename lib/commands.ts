@@ -17,6 +17,10 @@ export type Parsed =
   | { cmd: 'import'; file: string }
   | { cmd: 'lang'; value: 'zh' | 'en' | 'auto' }
   | { cmd: 'autoopen'; value: boolean }
+  | { cmd: 'translate'; value: boolean }
+  /** The colour scheme: `name` null asks which one is in use. */
+  | { cmd: 'colors'; name: string | null }
+  | { cmd: 'colors-reset' }
   | { cmd: 'tree-list' }
   | { cmd: 'tree-new'; name: string; from: string | null; at: string | null; empty: boolean; title: string | null; stay: boolean }
   | { cmd: 'tree-use'; name: string }
@@ -257,6 +261,25 @@ export function parseDecide(args: string): Parsed {
 
     case 'log':
       return { cmd: 'tree-log', limit: /^\d+$/.test(rest) ? Math.max(1, Number(rest)) : null }
+
+    case 'translate':
+    case 'translation': {
+      const v = rest.toLowerCase()
+      if (v === 'on' || v === 'true' || v === 'yes') return { cmd: 'translate', value: true }
+      if (v === 'off' || v === 'false' || v === 'no') return { cmd: 'translate', value: false }
+      return { cmd: 'error', what: 'missing', arg: 'value' }
+    }
+
+    case 'colors':
+    case 'colours':
+    case 'color':
+    case 'colour':
+    case '配色': {
+      const name = unquote(rest)
+      if (name === '') return { cmd: 'colors', name: null }
+      if (/^(reset|default)$/i.test(name) || name === '默认' || name === '重置') return { cmd: 'colors-reset' }
+      return { cmd: 'colors', name }
+    }
 
     case 'autoopen': {
       const v = rest.toLowerCase()

@@ -101,6 +101,17 @@ export function fmtClock(iso: string | null | undefined): string {
   return `${p2(d.getHours())}:${p2(d.getMinutes())}`
 }
 
+/** `HH:MM` for a moment of today, `MM-DD` for any other day (a bare date has no clock to show), in the viewer's local time; empty when `iso` does not parse. */
+export function fmtWhen(iso: string | null | undefined, nowMs: number): string {
+  if (typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso)) return fmtDate(iso)
+  const ms = parseTime(iso)
+  if (ms === null) return fmtDate(iso)
+  const a = new Date(ms)
+  const b = new Date(nowMs)
+  const today = a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  return today ? fmtClock(iso) : fmtDate(iso)
+}
+
 // ---------------------------------------------------------------- names
 
 /** `events/<ts>_<session>_<seq>.json`: file-name order is event order. */
@@ -137,7 +148,7 @@ export function isTreeName(x: unknown): x is string {
 
 /**
  * A tree name from what the person typed: used as it is when it is one, else made into one
- * (`SQL v3` -> `sql-v3`) when only letters, digits and spaces or punctuation have to change. Text
+ * (`Side B` -> `side-b`) when only letters, digits and spaces or punctuation have to change. Text
  * with other scripts in it is not turned into something else behind the person's back.
  */
 export function treeNameOf(raw: string): { name: string } | { error: 'empty' | 'main' | 'invalid' } {

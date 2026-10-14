@@ -13,7 +13,10 @@ export type Span = {
   bg?: string
   dim?: boolean
   bold?: boolean
+  underline?: boolean
   inverse?: boolean
+  /** The colour is final: the colour scheme in use does not repaint it (the swatch of a scheme shows that scheme's colours). */
+  fixed?: boolean
 }
 
 export type Line = Span[]

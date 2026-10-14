@@ -6,6 +6,7 @@ import {
   defaultConfig,
   parseConfig,
   serializeConfig,
+  setDisplay,
   setRecording,
   setTree,
   withStatus,
@@ -419,7 +420,7 @@ test('config: defaults, and a round trip through the text', () => {
     title: 'orders',
     startedAt: '2026-10-10T12:00:00.000+00:00',
     recording: true,
-    display: { asciiGlyphs: false, autoOpen: true, language: 'auto' },
+    display: { asciiGlyphs: false, autoOpen: true, language: 'auto', translate: true },
   })
   const parsed = parseConfig(serializeConfig(c))
   expect('config' in parsed && parsed.config).toEqual(c)
@@ -436,12 +437,14 @@ test('config: missing or wrong-typed fields take their defaults; a bad file is a
     title: 't',
     startedAt: '',
     recording: false,
-    display: { asciiGlyphs: true, autoOpen: false, language: 'zh' },
+    display: { asciiGlyphs: true, autoOpen: false, language: 'zh', translate: true },
   })
-  const odd = parseConfig('{"title": 5, "recording": "yes", "display": {"language": "klingon"}}')
+  const odd = parseConfig('{"title": 5, "recording": "yes", "display": {"language": "klingon", "translate": "no"}}')
   expect('config' in odd && odd.config.title).toBe('project')
   expect('config' in odd && odd.config.recording).toBe(true)
   expect('config' in odd && odd.config.display.language).toBe('auto')
+  // (only an explicit false switches translating off)
+  expect('config' in odd && odd.config.display.translate).toBe(true)
 
   expect(parseConfig('{nope')).toEqual({ error: 'config.json is not valid JSON' })
   expect(parseConfig('[]')).toEqual({ error: 'config.json is not a JSON object' })
@@ -449,6 +452,15 @@ test('config: missing or wrong-typed fields take their defaults; a bad file is a
   expect(parseConfig('{"status": {"argv": []}}')).toEqual({ error: 'config.json: status.argv must be a non-empty list of strings' })
   expect(parseConfig('{"status": {"argv": ["a", 3]}}')).toEqual({ error: 'config.json: status.argv must be a non-empty list of strings' })
   expect(parseConfig('{"status": "python x.py"}')).toEqual({ error: 'config.json: status.argv must be a non-empty list of strings' })
+})
+
+test('config: display.translate is on unless config.json says false, and setDisplay changes that key only', () => {
+  const off = parseConfig('{"title": "p", "display": {"translate": false}}')
+  expect('config' in off && off.config.display.translate).toBe(false)
+  const none = parseConfig('{"title": "p"}')
+  expect('config' in none && none.config.display.translate).toBe(true)
+  const text = JSON.stringify({ v: 1, title: 'p', display: { language: 'zh', futureKey: 1 }, other: true })
+  expect(JSON.parse(setDisplay(text, { translate: false })!)).toEqual({ v: 1, title: 'p', display: { language: 'zh', futureKey: 1, translate: false }, other: true })
 })
 
 test('config: the status interval and timeout are clamped', () => {
@@ -475,23 +487,23 @@ test('config: the tree config.json names, and setTree changes that key only', ()
   expect('config' in main).toBe(true)
   expect('config' in main && 'tree' in main.config).toBe(false)
   // any other tree is named the way its folder is
-  const named = parseConfig('{"title": "p", "tree": "sql-v3"}')
-  expect('config' in named && named.config.tree).toBe('sql-v3')
-  const c = { ...defaultConfig('orders', '2026-10-10T12:00:00.000+00:00'), tree: 'sql-v3' }
+  const named = parseConfig('{"title": "p", "tree": "side-b"}')
+  expect('config' in named && named.config.tree).toBe('side-b')
+  const c = { ...defaultConfig('orders', '2026-10-10T12:00:00.000+00:00'), tree: 'side-b' }
   const again = parseConfig(serializeConfig(c))
   expect('config' in again && again.config).toEqual(c)
   expect('config' in parseConfig(JSON.stringify({ tree: 'x'.repeat(32) }))).toBe(true) // 32 characters is the longest name
 
   // a name that cannot be a tree's is not taken, and is not an error either: the project stays on main
-  for (const bad of ['SQL v3', 'Sql-V3', 'a', '-sql', 'sql_v3', '../up', '', 'x'.repeat(33), 5, null, ['sql-v3']]) {
+  for (const bad of ['Side B', 'Side-B', 'a', '-sql', 'side_b', '../up', '', 'x'.repeat(33), 5, null, ['side-b']]) {
     const r = parseConfig(JSON.stringify({ title: 'p', tree: bad }))
     expect('config' in r).toBe(true)
     expect('config' in r && 'tree' in r.config).toBe(false)
   }
 
   const text = JSON.stringify({ v: 1, title: 'p', recording: true, display: { language: 'zh' }, futureKey: { a: 1 } })
-  const set = setTree(text, 'sql-v3')!
-  expect(JSON.parse(set)).toEqual({ v: 1, title: 'p', recording: true, display: { language: 'zh' }, futureKey: { a: 1 }, tree: 'sql-v3' })
+  const set = setTree(text, 'side-b')!
+  expect(JSON.parse(set)).toEqual({ v: 1, title: 'p', recording: true, display: { language: 'zh' }, futureKey: { a: 1 }, tree: 'side-b' })
   expect(set.endsWith('\n')).toBe(true)
   expect(JSON.parse(setTree(set, 'other-tree')!)).toEqual({ ...JSON.parse(text), tree: 'other-tree' }) // a second call replaces it
   // main is no key at all, and the rest is as it was
@@ -501,9 +513,9 @@ test('config: the tree config.json names, and setTree changes that key only', ()
   expect(JSON.parse(setTree(text, 'main')!)).toEqual(JSON.parse(text))
   // what was written is read back as the same tree
   const read = parseConfig(set)
-  expect('config' in read && read.config.tree).toBe('sql-v3')
-  expect(setTree('{broken', 'sql-v3')).toBeNull()
-  expect(setTree('[1]', 'sql-v3')).toBeNull()
+  expect('config' in read && read.config.tree).toBe('side-b')
+  expect(setTree('{broken', 'side-b')).toBeNull()
+  expect(setTree('[1]', 'side-b')).toBeNull()
 })
 
 // ------------------------------------------------------------ other trees
@@ -518,11 +530,11 @@ test('journal: other trees live under trees/<name>/ with their own events and sn
   const names = [await main.append({ op: 'start', actor: 'user' }, T0)]
   for (let i = 0; i < 11; i++) names.push(await main.append(addDraft(`base-${String(i).padStart(2, '0')}`), T0 + 1 + i))
 
-  const sql = main.sibling('sql-v3')
-  expect([sql.tree, sql.session, sql.root, main.tree]).toEqual(['sql-v3', 'wwwwww', ROOT, 'main'])
-  expect(sql.dir).toBe(`${DIR}/trees/sql-v3`)
-  expect(sql.eventsDir).toBe(`${DIR}/trees/sql-v3/events`)
-  expect(sql.treePath).toBe(`${DIR}/trees/sql-v3/tree.json`)
+  const sql = main.sibling('side-b')
+  expect([sql.tree, sql.session, sql.root, main.tree]).toEqual(['side-b', 'wwwwww', ROOT, 'main'])
+  expect(sql.dir).toBe(`${DIR}/trees/side-b`)
+  expect(sql.eventsDir).toBe(`${DIR}/trees/side-b/events`)
+  expect(sql.treePath).toBe(`${DIR}/trees/side-b/tree.json`)
   expect(sql.configPath).toBe(`${DIR}/config.json`) // one config.json for the whole project
   expect(await sql.sync()).toBe(false)
   expect(sql.model().nodes).toEqual([])
@@ -538,9 +550,9 @@ test('journal: other trees live under trees/<name>/ with their own events and sn
   expect(sql.model().nodes.map(n => n.id)).toEqual(Array.from({ length: 8 }, (_, i) => `base-${String(i).padStart(2, '0')}`))
 
   // then the event that says where it began, and work of its own
-  await sql.append({ op: 'fork', actor: 'user', text: 'SQL third try', base: { tree: 'main', at: names[8]!, count: 9 } }, T0 + 20)
+  await sql.append({ op: 'fork', actor: 'user', text: 'Another route', base: { tree: 'main', at: names[8]!, count: 9 } }, T0 + 20)
   await sql.append(addDraft('sql-only', 'base-00'), T0 + 21)
-  expect(sql.model().fork).toMatchObject({ tree: 'main', at: names[8], count: 9, title: 'SQL third try', actor: 'user' })
+  expect(sql.model().fork).toMatchObject({ tree: 'main', at: names[8], count: 9, title: 'Another route', actor: 'user' })
   expect(sql.model().nodes).toHaveLength(9)
   expect(sql.fileNames()).toHaveLength(11)
 
@@ -557,14 +569,14 @@ test('journal: other trees live under trees/<name>/ with their own events and sn
   disk.put(`${DIR}/trees/x/events/x.json`, '{}') // too short to be one
   disk.put(`${DIR}/trees/leftover`, 'a file that could be a name, but is not a folder')
   disk.put(`${DIR}/trees/main/events/${names[0]}`, disk.text(`${EVENTS}/${names[0]}`)) // made by hand: main is the one at the top, never one of these
-  expect(await main.listTrees()).toEqual(['aaa-first', 'mid-tree', 'sql-v3'])
-  expect(await sql.listTrees()).toEqual(['aaa-first', 'mid-tree', 'sql-v3'])
+  expect(await main.listTrees()).toEqual(['aaa-first', 'mid-tree', 'side-b'])
+  expect(await sql.listTrees()).toEqual(['aaa-first', 'mid-tree', 'side-b'])
 
   // each has its own snapshot, which says which tree it is and where it began
   await sql.writeTree('proj', T0 + 100)
   await main.writeTree('proj', T0 + 100)
-  const snap = JSON.parse(disk.text(`${DIR}/trees/sql-v3/tree.json`))
-  expect(snap).toMatchObject({ project: 'proj', tree: 'sql-v3', fork: { tree: 'main', at: names[8], count: 9, title: 'SQL third try', actor: 'user' } })
+  const snap = JSON.parse(disk.text(`${DIR}/trees/side-b/tree.json`))
+  expect(snap).toMatchObject({ project: 'proj', tree: 'side-b', fork: { tree: 'main', at: names[8], count: 9, title: 'Another route', actor: 'user' } })
   expect(snap.nodes.map((n: { id: string }) => n.id)).toContain('sql-only')
   expect(snap.nodes).toHaveLength(9)
   const mainSnap = JSON.parse(disk.text(`${DIR}/tree.json`))

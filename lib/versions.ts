@@ -8,7 +8,7 @@
 //   2026-10-08 17:44, 10-08, 17:44   the tree as it was by then (end of the minute / day given), local time
 //   10月8日 17:44                    the same, written the way it is said
 //   20261008T214400Z                 the tree as of that moment in an event file's name (UTC)
-//   v22-adopted, 构建版本            the tree as it was when that node was recorded (its id, or a piece of its title)
+//   merge-adopted, 合并规则            the tree as it was when that node was recorded (its id, or a piece of its title)
 //   node:current                     the same, for a node whose id looks like one of the above
 //
 // Nothing here touches the disk.
@@ -218,7 +218,7 @@ function atNode(ref: string, list: readonly Entry[], idx: TreeIndex): Resolved {
 
 const PATCH_KEYS = ['status', 'title', 'summary', 'rationale', 'parent', 'supersededBy', 'trunk', 'kind']
 
-/** What one event did, in a few words: `add design-v2 "design v2 定稿"`, `update v22 status adopted`. */
+/** What one event did, in a few words: `add notes-app "notes app 立项"`, `update merge status adopted`. */
 export function describeEvent(ev: DecisionEvent): string {
   const id = typeof ev.id === 'string' ? ev.id : ''
   switch (ev.op) {

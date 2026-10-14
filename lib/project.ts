@@ -1,4 +1,4 @@
-// Where a project's decisions live (spec 5.1). Nothing here touches the engine:
+// Where a project's decisions live. Nothing here touches the engine:
 // the caller passes in what it can ask the machine.
 
 export type ProjectIo = {

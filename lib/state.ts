@@ -4,7 +4,7 @@
 // declared in hooks/register.tsx, where the engine can list them; these are
 // their initial values.
 
-import type { DtModel, DtNow, DtProject, DtUi } from '../types'
+import type { DtModel, DtNow, DtProject, DtTm, DtTreeInfo, DtUi } from '../types'
 
 export const EMPTY_MODEL: DtModel = {
   isStarted: false,
@@ -19,6 +19,21 @@ export const EMPTY_MODEL: DtModel = {
 
 export const EMPTY_PROJECT: DtProject = { root: '', mode: 'off', config: null, configError: null, tree: 'main' }
 
-export const EMPTY_UI: DtUi = { selected: null, expanded: [], collapsed: [], filter: 'default', showNow: true, editing: null }
+export const EMPTY_UI: DtUi = {
+  selected: null,
+  expanded: [],
+  collapsed: [],
+  filter: 'default',
+  showNow: true,
+  editing: null,
+  view: 'tree',
+  tree: null,
+  pick: null,
+  newTree: null,
+}
 
 export const EMPTY_NOW: DtNow = { approval: 'none', argv: [], data: null, fetchedAt: null, error: null }
+
+export const EMPTY_TM: DtTm = { en: {}, zh: {} }
+
+export const EMPTY_TREES: DtTreeInfo[] = []

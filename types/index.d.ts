@@ -111,6 +111,17 @@ export type DtModel = {
 export type DtLanguage = 'auto' | 'zh' | 'en'
 export type DtLang = 'zh' | 'en'
 
+/**
+ * The project's translation memory (`.claude/decisions/i18n/`): a text as it was recorded, and what it
+ * reads like in the other language. Keyed by the text itself, so nothing in the events is touched.
+ */
+export type DtTm = {
+  /** English renditions of texts written in Chinese. */
+  en: Record<string, string>
+  /** Chinese renditions of texts written in English (technical terms stay English in them). */
+  zh: Record<string, string>
+}
+
 export type DtStatusConfig = {
   argv: string[]
   intervalSec: number
@@ -130,6 +141,8 @@ export type DtConfig = {
     asciiGlyphs: boolean
     autoOpen: boolean
     language: DtLanguage
+    /** Whether the mod may ask the session's model for the other language's version of a text (false: only what was recorded with one is shown). */
+    translate: boolean
   }
 }
 
@@ -150,6 +163,19 @@ export type DtFilter = 'default' | 'all' | 'pending' | 'clean'
 
 export type DtEdit = { id: string; status: DtStatus; summary: string }
 
+/** What the pane is showing: the tree in use, the overview of all the trees, the colour picker. */
+export type DtView = 'tree' | 'trees' | 'colors'
+
+/** The form for a new tree in the overview. */
+export type DtNewTree = {
+  name: string
+  /** The version of the tree to open it from: what the person wrote (nothing is "as it is now"). */
+  at: string
+  title: string
+  /** First line of why the tree could not be made, once the person tried. */
+  error: string | null
+}
+
 /** What this session's pane shows and how: per session, never written to disk. */
 export type DtUi = {
   selected: string | null
@@ -158,6 +184,46 @@ export type DtUi = {
   filter: DtFilter
   showNow: boolean
   editing: DtEdit | null
+  view: DtView
+  /** The tree the pane looks at; null is the one the project records into. */
+  tree: string | null
+  /** The tree highlighted in the overview, or the colour scheme highlighted in the picker. */
+  pick: string | null
+  /** The new-tree form of the overview, while it is open. */
+  newTree: DtNewTree | null
+}
+
+/**
+ * A step of a tree's mainline that the tree recorded itself, and not one it was given by being opened from
+ * another: a point of the overview's graph.
+ */
+export type DtGraphStep = {
+  id: string
+  title: string
+  status: DtStatus
+  /** When the decision took effect, else when it was recorded (ISO). */
+  at: string
+  /** Name of the event file that recorded it. File names sort in the order of the events, in every tree. */
+  by: string
+  /** It is the newest step of the tree that is adopted: the head of its rail. */
+  head: boolean
+}
+
+/** One tree of the project, as the tabs and the overview list it. */
+export type DtTreeInfo = {
+  name: string
+  /** What it is for: the title it was opened with; the first tree, which has none, carries its oldest step's title. */
+  title: string | null
+  /** Where it began; null for the first tree. */
+  fork: DtForkBase | null
+  /** Nodes that are not retracted, steps of its mainline, and events. */
+  nodes: number
+  steps: number
+  events: number
+  lastEventAt: string | null
+  lastActor: DtActor | null
+  /** The steps it recorded itself, oldest first (the newest few dozen at most). */
+  own: DtGraphStep[]
 }
 
 export type DtLaneState = 'running' | 'queued' | 'done' | 'failed' | 'idle'
@@ -198,6 +264,13 @@ declare module 'claude-code' {
       ui: DtUi
       lang: DtLang
       now: DtNow
+      tm: DtTm
+      /** Every tree of the project, for the tabs and the overview. */
+      trees: DtTreeInfo[]
+      /** The colour scheme in use (an id of lib/palettes.ts). */
+      scheme: string
+      /** How many texts wait for their rendition in the other language. */
+      translating: number
       /** Token of the Runtime that owns the poll (a reload replaces it). */
       owner: string
     }

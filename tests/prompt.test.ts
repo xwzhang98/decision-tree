@@ -12,7 +12,7 @@ function node(i: number, over: Partial<DtNode> = {}): DtNode {
   const at = new Date(NOW - (100 - i) * 60_000).toISOString()
   return {
     id: `node-${String(i).padStart(3, '0')}`,
-    title: `决定 ${i}：把构建版本定为 v2.${i}，池的大小用比例`,
+    title: `决定 ${i}：把合并规则定为 v1.${i}，批的大小用比例`,
     parent: null,
     status: 'adopted',
     kind: 'decision',
@@ -49,7 +49,9 @@ test('prompt: on carries the rules, the mainline and the last ten nodes, and fit
   expect(text).toContain('decision_tree')
   expect(text).toContain('evidence.run')
   expect(text).toContain('superseded')
-  expect(text).toContain('never translate')
+  // the language rule in a line: the user's language, professional names and common work words in English, and `en` for the rest
+  expect(text).toContain('professional names and common work words')
+  expect(text).toContain('also needs en')
   expect(text).toContain('Mainline: ')
   expect(text).toContain('node-040 · adopted')
   expect(text).not.toContain('node-001 ·')
@@ -61,12 +63,12 @@ test('prompt: on carries the rules, the mainline and the last ten nodes, and fit
 test('prompt: ten recent nodes with long titles and long ids still fit, the titles giving way first', () => {
   // fourteen nodes, every other one on the mainline; titles far longer than the section can show,
   // and ids from 8 characters up to the 48 that the mod itself makes
-  const slug = 'pool-ram-queue-sizes-timer-all-by-fraction-'
+  const slug = 'sync-ram-queue-sizes-timer-all-by-fraction-'
   const idOf = (i: number, length: number) => slug.repeat(2).slice(0, length - 5) + String(i).padStart(5, '0')
   const sectionFor = (idLength: number): string => {
     const nodes: DtNode[] = []
     for (let i = 1; i <= 14; i++) {
-      const title = `决定 ${i}：把构建版本定为 v2.${i}，池的大小、线程、队列全部用比例并加上缓存区比例`
+      const title = `决定 ${i}：把合并规则定为 v1.${i}，批的大小、重试、队列全部用比例并加上缓存区比例`
       nodes.push(node(i, { id: idOf(i, idLength), title, trunk: i % 2 === 0 }))
     }
     return sectionText('recording', buildIndex({ nodes }))
@@ -129,13 +131,13 @@ test('prompt: a tree other than main is named, with where it began, and the sect
   const nodes: DtNode[] = []
   for (let i = 1; i <= 40; i++) nodes.push(node(i, { trunk: i % 5 === 0 }))
   const idx = buildIndex({ nodes })
-  const note: TreeNote = { name: 'sql-v3', from: 'from main at #17 (10-08 17:44)' }
+  const note: TreeNote = { name: 'side-b', from: 'from main at #17 (10-08 17:44)' }
   const text = sectionText('recording', idx, note)
   const lines = text.split('\n')
   const without = sectionText('recording', idx)
 
   // one line, after the four lines of rules and before the tree it speaks of
-  expect(lines[4]).toBe('Current tree: sql-v3 (from main at #17 (10-08 17:44)). What you record goes into it, and the list below is its.')
+  expect(lines[4]).toBe('Current tree: side-b (from main at #17 (10-08 17:44)). What you record goes into it, and the list below is its.')
   expect(lines[5]!.startsWith('Mainline: ')).toBe(true)
   expect(lines.filter(l => l.startsWith('Current tree: '))).toHaveLength(1)
   expect(lines.slice(0, 4)).toEqual(without.split('\n').slice(0, 4))
@@ -189,7 +191,7 @@ test('prompt: the worst case with a tree line still fits', () => {
   expect(name).toMatch(TREE_NAME)
   const from = 'from another-tree-with-a-long-name-xy at #123456 (12-31 23:59)'
   const line = `Current tree: ${name} (${from})${TREE_LINE_END}`
-  const slug = 'pool-ram-queue-sizes-timer-all-by-fraction-'
+  const slug = 'sync-ram-queue-sizes-timer-all-by-fraction-'
   const idOf = (i: number, length: number) => slug.repeat(2).slice(0, length - 5) + String(i).padStart(5, '0')
   const rules = sectionText('recording', null).split('\n').slice(0, 4)
 
@@ -197,7 +199,7 @@ test('prompt: the worst case with a tree line still fits', () => {
   for (const idLength of [48, 64]) {
     const nodes: DtNode[] = []
     for (let i = 1; i <= 30; i++) {
-      const title = `决定 ${i}：把构建版本定为 v2.${i}，池的大小、线程、队列全部用比例并加上缓存区比例`
+      const title = `决定 ${i}：把合并规则定为 v1.${i}，批的大小、重试、队列全部用比例并加上缓存区比例`
       nodes.push(node(i, { id: idOf(i, idLength), title, status: 'in-progress', trunk: true }))
     }
     const text = sectionText('recording', buildIndex({ nodes }), { name, from })

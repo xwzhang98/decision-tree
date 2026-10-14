@@ -4,13 +4,15 @@
 
 import { mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On, PaneOpenArgs, PromptOrigin, ToolSpec, CommandSpec, ProcessRunResult } from 'claude-code'
+import type { On, PaneOpenArgs, PromptOrigin, ToolSpec, CommandSpec, ProcessRunResult, ModelCompleteInput } from 'claude-code'
 
 import { defaultConfig, serializeConfig, withStatus } from '../lib/config'
 import { eventFileName, isoLocal } from '../lib/events'
-import type { DecisionEvent, DtDecidedBy, DtEvidence, DtKind, DtStatus } from '../types'
+import type { DecisionEvent, DtActor, DtDecidedBy, DtEvidence, DtKind, DtLang, DtStatus } from '../types'
 import { MemDisk } from './mem'
-import { ROOT, T0 } from './port'
+import { CONFLICTS, MAIN_RAW, NOW, iso, noon } from './notes'
+import { NO_MODEL, ROOT, T0 } from './port'
+import type { ModelHandler } from './port'
 
 export type World = {
   disk: MemDisk
@@ -31,15 +33,19 @@ export type World = {
   /** The pane counts as open and shown once something opened it. */
   paneOpen: boolean
   placed: boolean
+  /** Every request the mod made of the model (`$.model.complete`): the translator's. */
+  modelCalls: ModelCompleteInput[]
+  /** What the model answers; null: no model to be had (`NO_MODEL`). */
+  onModel: ModelHandler | null
 }
 
 const run = (r: Partial<ProcessRunResult>): ProcessRunResult => ({ exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false, ...r }) as ProcessRunResult
 
 /** Registers the host's answers. Call before the first use of `$`. */
-export function world(on: On, options: { cwd?: string; session?: string } = {}): World {
+export function world(on: On, options: { cwd?: string; session?: string; now?: number } = {}): World {
   const w: World = {
     disk: new MemDisk(),
-    clock: mock.clock(on, { now: T0 }),
+    clock: mock.clock(on, { now: options.now ?? T0 }),
     store: new Map(),
     tools: [],
     commands: [],
@@ -52,6 +58,8 @@ export function world(on: On, options: { cwd?: string; session?: string } = {}):
     gitTop: null,
     paneOpen: false,
     placed: true,
+    modelCalls: [],
+    onModel: null,
   }
   const cwd = options.cwd ?? ROOT
 
@@ -101,6 +109,11 @@ export function world(on: On, options: { cwd?: string; session?: string } = {}):
     } catch (err) {
       return { deny: err instanceof Error ? err.message : String(err) }
     }
+  })
+
+  on('model.complete', async (_$, e) => {
+    w.modelCalls.push(e)
+    return { value: w.onModel === null ? NO_MODEL : await w.onModel(e) }
   })
 
   on('process.run', (_$, e) => {
@@ -155,10 +168,16 @@ export type SeedNode = {
   kind?: DtKind
   trunk?: boolean
   summary?: string
+  rationale?: string
   evidence?: DtEvidence[]
   sources?: string[]
+  tags?: string[]
   decidedBy?: DtDecidedBy
   decidedAt?: string
+  /** When the node last changed (epoch ms): the time its `add` event says. Default: the second it was written. */
+  at?: number
+  /** Notes written under the node, each right after it. */
+  notes?: { text: string; actor?: DtActor; at?: number }[]
 }
 
 export type SeedOptions = {
@@ -170,6 +189,8 @@ export type SeedOptions = {
   statusArgv?: string[]
   recording?: boolean
   ascii?: boolean
+  /** Whether the mod asks the model for the versions in the other language (`display.translate`). Off unless a test is about translating. */
+  translate?: boolean
 }
 
 /**
@@ -181,38 +202,82 @@ export function seed(w: World, nodes: readonly SeedNode[], options: SeedOptions 
   const session = options.session ?? 'seed00'
   const base = options.at ?? T0 - 24 * 3600 * 1000
 
-  let config = defaultConfig(options.title ?? 'orders', isoLocal(base))
+  let config = defaultConfig(options.title ?? 'notes-app', isoLocal(base))
   if (options.statusArgv !== undefined) config = withStatus(config, options.statusArgv)
-  config = { ...config, recording: options.recording ?? true, display: { ...config.display, asciiGlyphs: options.ascii ?? false } }
+  config = { ...config, recording: options.recording ?? true, display: { ...config.display, asciiGlyphs: options.ascii ?? false, translate: options.translate ?? false } }
   w.disk.put(`${dir}/config.json`, serializeConfig(config))
 
+  // (the name of a file says where the event comes in the order; the event's own `ts` says when it happened)
   let seq = 0
-  const put = (ms: number, event: Omit<DecisionEvent, 'v' | 'ts' | 'session' | 'actor'>) => {
+  const put = (event: Omit<DecisionEvent, 'v' | 'ts' | 'session' | 'actor'> & { actor?: DtActor }, ts?: number) => {
+    const ms = base + seq * 1000
     seq += 1
-    const body: DecisionEvent = { v: 1, ts: isoLocal(ms), session, actor: 'model', ...event }
+    const body: DecisionEvent = { v: 1, ts: isoLocal(ts ?? ms), session, ...event, actor: event.actor ?? 'model' }
     w.disk.put(`${dir}/events/${eventFileName(ms, session, seq)}`, JSON.stringify(body, null, 2))
   }
 
-  put(base, { op: 'start' })
-  nodes.forEach((n, k) => {
-    put(base + (k + 1) * 1000, {
-      op: 'add',
-      id: n.id,
-      node: {
-        title: n.title,
-        parent: n.parent ?? null,
-        status: n.status ?? 'adopted',
-        kind: n.kind ?? 'decision',
-        ...(n.trunk === true ? { trunk: true } : {}),
-        ...(n.summary !== undefined ? { summary: n.summary } : {}),
-        ...(n.evidence !== undefined ? { evidence: n.evidence } : {}),
-        ...(n.sources !== undefined ? { sources: n.sources } : {}),
-        ...(n.decidedBy !== undefined ? { decidedBy: n.decidedBy } : {}),
-        ...(n.decidedAt !== undefined ? { decidedAt: n.decidedAt } : {}),
+  put({ op: 'start' })
+  for (const n of nodes) {
+    put(
+      {
+        op: 'add',
+        id: n.id,
+        node: {
+          title: n.title,
+          parent: n.parent ?? null,
+          status: n.status ?? 'adopted',
+          kind: n.kind ?? 'decision',
+          ...(n.trunk === true ? { trunk: true } : {}),
+          ...(n.summary !== undefined ? { summary: n.summary } : {}),
+          ...(n.rationale !== undefined ? { rationale: n.rationale } : {}),
+          ...(n.evidence !== undefined ? { evidence: n.evidence } : {}),
+          ...(n.sources !== undefined ? { sources: n.sources } : {}),
+          ...(n.tags !== undefined ? { tags: n.tags } : {}),
+          ...(n.decidedBy !== undefined ? { decidedBy: n.decidedBy } : {}),
+          ...(n.decidedAt !== undefined ? { decidedAt: n.decidedAt } : {}),
+        },
       },
-    })
+      n.at,
+    )
+    for (const note of n.notes ?? []) put({ op: 'note', id: n.id, text: note.text, actor: note.actor ?? 'model' }, note.at)
+  }
+}
+
+const HOUR = 3600 * 1000
+
+/** The decisions of the notes-app sample (tests/notes.ts), as seed nodes in the language `lang`; the clock should read `NOW`. */
+export function notesNodes(lang: DtLang = 'en'): SeedNode[] {
+  return MAIN_RAW.map((r): SeedNode => {
+    const [month, day] = r.date.split('-').map(Number) as [number, number]
+    const node: SeedNode = {
+      id: r.id,
+      title: lang === 'en' ? r.en : r.zh,
+      parent: r.parent,
+      status: r.status,
+      decidedBy: r.by,
+      decidedAt: noon(month, day),
+      at: NOW - r.ago * HOUR,
+    }
+    if (r.trunk) node.trunk = true
+    if (r.id === 'n3') {
+      const i = lang === 'en' ? 0 : 1
+      const [month2, day2] = CONFLICTS.note.date.split('-').map(Number) as [number, number]
+      node.summary = CONFLICTS.summary[i]
+      node.rationale = CONFLICTS.rationale[i]
+      node.evidence = CONFLICTS.evidence.map(e => ({ label: e.label[i], value: e.value[i], run: e.run }))
+      node.sources = [...CONFLICTS.sources]
+      node.notes = [{ text: CONFLICTS.note.text[i], actor: CONFLICTS.note.actor, at: Date.parse(noon(month2, day2)) }]
+    }
+    return node
   })
 }
+
+/** The notes-app sample on the disk, in `lang`. The world's clock has to be set to the sample's `NOW`: `world(on, { now: NOW })`. */
+export function seedNotes(w: World, options: SeedOptions & { lang?: DtLang } = {}): void {
+  seed(w, notesNodes(options.lang ?? 'en'), { at: NOW - 1000 * HOUR, ...options })
+}
+
+export { NOW, iso }
 
 /** The event files on the world's disk, parsed, in file-name order. */
 export function eventsOn(w: World, root = ROOT): Record<string, unknown>[] {

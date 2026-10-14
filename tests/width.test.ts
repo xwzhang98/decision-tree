@@ -8,7 +8,7 @@ test('width: ascii, CJK, fullwidth and mixed text', () => {
   expect(strWidth('a中b')).toBe(4)
   expect(strWidth('ＡＢ')).toBe(4)
   expect(strWidth('，。')).toBe(4)
-  expect(strWidth('（exp-2）')).toBe(2 + 5 + 2)
+  expect(strWidth('（方案B）')).toBe(2 + 5 + 2)
   expect(strWidth('')).toBe(0)
 })
 
@@ -16,7 +16,7 @@ test('width: ambiguous-width glyphs the tree draws count one column', () => {
   for (const g of ['✓', '✗', '=', '◐', '○', '◌', '⊘', '‖', '─', '│', '├', '└', '█', '░', '›', '…']) {
     expect(strWidth(g)).toBe(1)
   }
-  expect(strWidth('├ ✓ 连接只走池化')).toBe(4 + 12)
+  expect(strWidth('├ ✓ 只用本地存储')).toBe(4 + 12)
 })
 
 test('width: combining marks take no column and emoji take two', () => {
@@ -55,7 +55,7 @@ test('pad helpers pad by display width', () => {
 })
 
 test('fit puts the right part flush right and cuts the left part first', () => {
-  const line = fit('连接只走池化（exp-2）', '10-09', 24)
+  const line = fit('只用本地存储（方案B）', '10-09', 24)
   expect(strWidth(line)).toBe(24)
   expect(line.endsWith('10-09')).toBe(true)
   const tight = fit('一个很长很长很长的标题', '10-09', 14)
@@ -69,7 +69,7 @@ test('fit puts the right part flush right and cuts the left part first', () => {
 test('wrap breaks at spaces and between CJK characters', () => {
   expect(wrap('hello world foo', 11)).toEqual(['hello world', 'foo'])
   expect(wrap('hello world', 5)).toEqual(['hello', 'world'])
-  expect(wrap('池的大小、线程、队列全部用比例', 12)).toEqual(['池的大小、线', '程、队列全部', '用比例'])
+  expect(wrap('批的大小、重试、队列全部用比例', 12)).toEqual(['批的大小、重', '试、队列全部', '用比例'])
   expect(wrap('a\nb', 10)).toEqual(['a', 'b'])
   expect(wrap('', 10)).toEqual([''])
   // a word wider than the line is broken by characters
@@ -81,21 +81,21 @@ test('wrap breaks at spaces and between CJK characters', () => {
 
 test('wrap keeps closing marks off the start of a line and opening brackets off the end', () => {
   // the stop would start the second line: the character before it goes down with it
-  expect(wrap('池的大小，线程', 8)).toEqual(['池的大', '小，线程'])
+  expect(wrap('批的大小，线程', 8)).toEqual(['批的大', '小，线程'])
   // an opening bracket would end the first line: it goes down to what it opens
-  expect(wrap('池的大（默认）', 8)).toEqual(['池的大', '（默认）'])
-  expect(wrap('选择连接池（默认值）。', 12)).toEqual(['选择连接池', '（默认值）。'])
+  expect(wrap('批的大（默认）', 8)).toEqual(['批的大', '（默认）'])
+  expect(wrap('选择存储层（默认值）。', 12)).toEqual(['选择存储层', '（默认值）。'])
   // two closing marks in a row stay with the text before them
-  expect(wrap('池的大）。线', 8)).toEqual(['池的', '大）。线'])
+  expect(wrap('批的大）。线', 8)).toEqual(['批的', '大）。线'])
   // the same for the plain brackets and stops next to CJK characters, and for the dash and the ellipsis
-  expect(wrap('池的大小(默认)', 9)).toEqual(['池的大小', '(默认)'])
-  expect(wrap('池的大小……还有', 8)).toEqual(['池的大', '小……还有'])
-  expect(wrap('池的大小——还有', 8)).toEqual(['池的大', '小——还有'])
+  expect(wrap('批的大小(默认)', 9)).toEqual(['批的大小', '(默认)'])
+  expect(wrap('批的大小……还有', 8)).toEqual(['批的大', '小……还有'])
+  expect(wrap('批的大小——还有', 8)).toEqual(['批的大', '小——还有'])
   // a space is a break of its own: nothing moves
-  expect(wrap('池的大小 ，线程', 8)).toEqual(['池的大小', '，线程'])
+  expect(wrap('批的大小 ，线程', 8)).toEqual(['批的大小', '，线程'])
   // the text is whole, every line fits, and no mark is on an edge it must not touch (from the width that holds the
   // longest word with two marks after it)
-  const prose = '先把连接池的大小定为 32，再看 P99 的变化（见 exp-2）；如果没有改善，就改成按比例分配——线程、队列也一样。结论：采用“比例”方案。'
+  const prose = '先把批的大小定为 32，再看冷启动的变化（见方案B）；如果没有改善，就改成按比例分配——线程、队列也一样。结论：采用“比例”方案。'
   for (let width = 10; width <= 40; width++) {
     const lines = wrap(prose, width)
     expect(lines.join(' ').replace(/ /g, '')).toBe(prose.replace(/ /g, ''))
@@ -106,7 +106,7 @@ test('wrap keeps closing marks off the start of a line and opening brackets off 
     }
   }
   // too narrow to move anything: the lines still fit
-  for (const line of wrap('池，的。大）小', 2)) expect(strWidth(line) <= 2).toBe(true)
+  for (const line of wrap('批，的。大）小', 2)) expect(strWidth(line) <= 2).toBe(true)
 })
 
 // ---------------------------------------------------------------- drawable: text every terminal counts the same
@@ -155,7 +155,7 @@ test('drawable: variation selectors, joiners, modifiers, keycaps and tags go; fl
 test('drawable: leaves alone what every terminal already counts the same', () => {
   const alone = [
     'plain ASCII, digits 0123456789 and (symbols) -> [ok] "q" #1 @ 100%',
-    '决策树 连接只走池化（exp-2）',
+    '决策树 只用本地存储（方案B）',
     'ＡＢＣ，。！',
     'ひらがな カタカナ',
     '한국어 결정',
@@ -163,7 +163,7 @@ test('drawable: leaves alone what every terminal already counts the same', () =>
     'café naïve ÀÉÎÕÜ',
     'cafe\u0301 nai\u0308ve', // the same accents as combining marks
     'Привет мир αβγ שלום مرحبا',
-    '−12.6% [−15.1, −10.4]',
+    '−17.4% [−19.8, −15.3]',
     '├ └ │ ─ ✓ ✗ ◐ ○ ⊘ ‖ █ ░ › … ▾ ▸ ▲ ▼ ❯', // what the tree draws itself
     '✓ ✔ ✅ ❌ ★ ☆ ⭐ ✨ ☀ ⚡ 😀 🎉 👍 🔥 🚀 🤖 🥰', // emoji every table knows, with no selector or modifier
     '\u{1F6D5} \u{1F6FA} \u{1F90D} \u{1F971}', // the newest ones the table knows: Unicode 12
@@ -317,7 +317,7 @@ test('drawable: what is left is counted the same by terminals that cluster graph
     MELTING,
     '☺\ufe0e',
     `ok ✅ ${HEART} ${FAMILY} ${CHINA} ${KEYCAP} ${THUMB} ${MELTING} ${ENGLAND} done`,
-    '决策树 连接只走池化（exp-2） ✓ ✗ ◐ ○ ⊘',
+    '决策树 只用本地存储（方案B） ✓ ✗ ◐ ○ ⊘',
     'cafe\u0301 中\u0301 한국어',
   ]
   for (const s of [...sequences, ...others, '\u1112\u1161\u11ab']) {

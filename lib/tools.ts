@@ -1,4 +1,4 @@
-// The tools the model sees (spec 7): their names, the schemas, and the rules the
+// The tools the model sees: their names, the schemas, and the rules the
 // descriptions carry. The text is for the model, so it is English whatever
 // language the pane is in.
 
@@ -47,13 +47,35 @@ const EVIDENCE_ITEM = {
   type: 'object',
   required: ['label'],
   properties: {
-    label: { type: 'string', description: 'What was measured or observed, e.g. "model A, seed 0, after warm-up".' },
-    value: { type: 'string', description: 'The key number, e.g. "metric X -12.6%".' },
-    ci: { type: 'string', description: 'The interval, e.g. "[-15.1, -10.4]".' },
+    label: { type: 'string', description: 'What was measured or observed, e.g. "model A, run 0, after warm-up".' },
+    value: { type: 'string', description: 'The key number, e.g. "cold start -17.4%".' },
+    ci: { type: 'string', description: 'The interval, e.g. "[-19.8, -15.3]".' },
     run: { type: 'string', description: 'The run name, e.g. "model_a_s0".' },
     note: { type: 'string' },
     source: { type: 'string', description: 'Path of the report or file the number comes from.' },
   },
+}
+
+/** The English version of an evidence item (the words of it: what was measured, the key number as text, the remark). */
+const EN_EVIDENCE = {
+  type: 'object',
+  properties: { label: { type: 'string' }, value: { type: 'string' }, note: { type: 'string' } },
+}
+
+/** `en`: what a model that writes in Chinese hands over so the pane can show English at once. */
+function englishOf(withAdded: boolean) {
+  return {
+    type: 'object',
+    description:
+      'Only when the text you give is not English: its English version, field by field, with no Chinese characters in it. Leave it out when the text is English. Never an English version of text already recorded that you are not changing.',
+    properties: {
+      title: { type: 'string' },
+      summary: { type: 'string' },
+      rationale: { type: 'string' },
+      evidence: { type: 'array', items: EN_EVIDENCE, description: 'Same order as evidence.' },
+      ...(withAdded ? { addEvidence: { type: 'array', items: EN_EVIDENCE, description: 'Same order as addEvidence.' } } : {}),
+    },
+  }
 }
 
 const FIELDS = {
@@ -78,7 +100,7 @@ const RULES = [
   'STATUS FOLLOWS RESULTS: planned -> in-progress -> adopted / rejected. When a new decision replaces an old one, call decision_update on the old node with supersededBy (its status becomes "superseded").',
   'ONE MATTER, ONE NODE: another seed of the same thing is more evidence (decision_update with addEvidence), not a new node.',
   'BEFORE RECORDING: pick the parent from the tree in the system prompt; if unsure, call decision_tree first.',
-  'LANGUAGE: technical terms (run names, metric and column names, seed, ...) always in English; title, summary and rationale in the language the user writes in (Chinese if they write Chinese, English if English). Never translate text already recorded.',
+  'LANGUAGE: write title, summary, rationale, evidence text and notes in the language the user writes in (Chinese if they write Chinese, English if English). Professional names and everyday work words (bug, doc, commit, config, run, seed, metric, ...) always stay in English, also inside Chinese text. When what you write is not English, also pass en: the same fields in English (no Chinese characters in it), so the pane can show English at once; when it is English, leave en out. Never rewrite or translate text already recorded.',
 ].join('\n')
 
 export const SPECS: Record<ToolName, ToolSpec> = {
@@ -124,6 +146,7 @@ export const SPECS: Record<ToolName, ToolSpec> = {
         sources: { type: 'array', items: { type: 'string' }, description: 'Report or file paths.' },
         decidedBy: FIELDS.decidedBy,
         decidedAt: FIELDS.decidedAt,
+        en: englishOf(false),
       },
     },
     isDeferred: false,
@@ -155,6 +178,7 @@ export const SPECS: Record<ToolName, ToolSpec> = {
         supersededBy: { type: ['string', 'null'], description: 'Id of the node that replaces this one.' },
         decidedBy: FIELDS.decidedBy,
         decidedAt: FIELDS.decidedAt,
+        en: englishOf(true),
       },
     },
     isDeferred: false,
@@ -170,6 +194,7 @@ export const SPECS: Record<ToolName, ToolSpec> = {
       properties: {
         id: { type: 'string' },
         text: { type: 'string' },
+        en: { type: 'string', description: 'Only when text is not English: its English version, with no Chinese characters in it.' },
       },
     },
     isDeferred: false,
@@ -200,13 +225,13 @@ export const SPECS: Record<ToolName, ToolSpec> = {
     description: [
       'Open a new decision tree in this project: a copy of the current tree (or of one version of it) to record the next line of work in, without touching the original. Recording then switches to the new tree for every session of the project.',
       "Call it only when the user asks for a new tree, branch or alternative line (for example 'open a new tree from the current one', '新开一个 tree'). Never on your own.",
-      'name: letters, digits and hyphens, 2-32 characters, e.g. "sql-v3" (main is taken). at (optional): the version to copy: leave out or "current" for everything recorded so far; "#N" for the first N events (decision_tree with log: N numbers them); a date or time such as "2026-10-08 17:44" or "10-08"; or a node id or piece of its title for the tree as it was when that node was recorded. from (optional): the tree to copy, default the current one. empty (optional): true for a blank tree. title (optional): a label for people. stay (optional): true to open it without switching to it.',
+      'name: letters, digits and hyphens, 2-32 characters, e.g. "crdt-engine" (main is taken). at (optional): the version to copy: leave out or "current" for everything recorded so far; "#N" for the first N events (decision_tree with log: N numbers them); a date or time such as "2026-10-08 17:44" or "10-08"; or a node id or piece of its title for the tree as it was when that node was recorded. from (optional): the tree to copy, default the current one. empty (optional): true for a blank tree. title (optional): a label for people. stay (optional): true to open it without switching to it.',
     ].join('\n'),
     inputSchema: {
       type: 'object',
       required: ['name'],
       properties: {
-        name: { type: 'string', description: 'The new tree\'s name, e.g. "sql-v3".' },
+        name: { type: 'string', description: 'The new tree\'s name, e.g. "crdt-engine".' },
         at: { type: 'string', description: 'The version to copy: current, #N, a date or time, or a node.' },
         from: { type: 'string', description: 'The tree to copy; default the current one.' },
         empty: { type: 'boolean', description: 'Open a blank tree instead of a copy.' },

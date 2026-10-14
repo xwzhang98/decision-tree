@@ -13,10 +13,10 @@ async function boot(engine = new FakeEngine(), session = 'abcdef0123456789') {
   return { rt, engine, p: engine.port }
 }
 
-/** A project that is recording, with one root decision (design-v2). */
+/** A project that is recording, with one root decision (notes-app). */
 async function started(title = 'orders') {
   const b = await boot()
-  await b.rt.toolCall(b.p, 'decision_log_start', { title, rootTitle: 'design v2' })
+  await b.rt.toolCall(b.p, 'decision_log_start', { title, rootTitle: 'notes app' })
   return b
 }
 
@@ -43,8 +43,8 @@ test('io: a config.json that cannot be read for a moment does not stop the recor
   expect(engine.cells.project).toMatchObject({ mode: 'recording', config: { title: 'orders' } })
 
   // the model goes on recording meanwhile
-  const r = await rt.toolCall(p, 'decision_record', { id: 'during-gap', title: 'recorded during the gap', parent: 'design-v2', status: 'planned' })
-  expect(text(r)).toBe('Recorded during-gap (under design-v2, Planned)')
+  const r = await rt.toolCall(p, 'decision_record', { id: 'during-gap', title: 'recorded during the gap', parent: 'notes-app', status: 'planned' })
+  expect(text(r)).toBe('Recorded during-gap (under notes-app, planned)')
   expect(eventFiles(engine)).toHaveLength(files + 1)
 
   // somebody pauses the project meanwhile: it is taken in at the first poll that can read the file, not before
@@ -67,7 +67,7 @@ test('io: config.json gone for one poll is not the end of recording; gone twice 
   await engine.advance(5000)
   expect(rt.mode).toBe('recording')
   expect(engine.cells.project.mode).toBe('recording')
-  expect(text(await rt.toolCall(p, 'decision_note', { id: 'design-v2', text: 'written in the gap' }))).toBe('Noted on design-v2')
+  expect(text(await rt.toolCall(p, 'decision_note', { id: 'notes-app', text: 'written in the gap' }))).toBe('Noted on notes-app')
 
   // it is back, which starts the count over: one more miss later is again only one
   engine.put(configPath(), cfg)
@@ -81,14 +81,14 @@ test('io: config.json gone for one poll is not the end of recording; gone twice 
   expect(rt.mode).toBe('off')
   expect(engine.cells.project).toMatchObject({ mode: 'off', config: null })
   expect(rt.section()?.text).toBe(OFF_LINE)
-  const denied = await rt.toolCall(p, 'decision_record', { title: 'too late', parent: 'design-v2', status: 'planned' })
+  const denied = await rt.toolCall(p, 'decision_record', { title: 'too late', parent: 'notes-app', status: 'planned' })
   expect(denied).toEqual({ deny: expect.stringContaining('decision_log_start') })
 
   // and when the file is back, so is the recording
   engine.put(configPath(), cfg)
   await engine.advance(5000)
   expect(rt.mode).toBe('recording')
-  expect(text(await rt.toolCall(p, 'decision_note', { id: 'design-v2', text: 'and after it' }))).toBe('Noted on design-v2')
+  expect(text(await rt.toolCall(p, 'decision_note', { id: 'notes-app', text: 'and after it' }))).toBe('Noted on notes-app')
   expect(eventsOf(engine).filter(e => e.op === 'note').map(e => e.text)).toEqual(['written in the gap', 'and after it'])
 })
 
@@ -132,7 +132,7 @@ test('io: pause, resume, lang and autoopen change the file as it is, so with a c
 test('io: events that cannot be listed keep the pane as it was, say so once, and come back', async () => {
   const { rt, engine, p } = await started()
   const ids = () => engine.cells.model.nodes.map(n => n.id)
-  expect(ids()).toEqual(['design-v2'])
+  expect(ids()).toEqual(['notes-app'])
   const toasts = () => engine.toasts.map(t => t.text)
   const told = toasts().length
 
@@ -140,25 +140,25 @@ test('io: events that cannot be listed keep the pane as it was, say so once, and
   engine.disk.listFailing.add(EVENTS)
   dropEvent(engine, 'late-one')
   await engine.advance(20_000)
-  expect(ids()).toEqual(['design-v2'])
+  expect(ids()).toEqual(['notes-app'])
   expect(rt.mode).toBe('recording')
   expect(engine.cells.project.mode).toBe('recording')
   expect(toasts().slice(told)).toEqual([`Cannot read the decision record (EIO: cannot list ${EVENTS}); showing what was read last.`])
   // the model is shown what was read last, and the person is not told again
-  expect(text(await rt.toolCall(p, 'decision_tree', {}))).toContain('design-v2')
+  expect(text(await rt.toolCall(p, 'decision_tree', {}))).toContain('notes-app')
   expect(toasts()).toHaveLength(told + 1)
 
   // the disk answers: the events that came meanwhile appear, and the person hears that it works again
   engine.disk.listFailing.delete(EVENTS)
   await engine.advance(5000)
-  expect(ids()).toEqual(['design-v2', 'late-one'])
+  expect(ids()).toEqual(['notes-app', 'late-one'])
   expect(toasts().slice(told)).toEqual([`Cannot read the decision record (EIO: cannot list ${EVENTS}); showing what was read last.`, 'The decision record can be read again.'])
 
   // a second outage is a new one: it is said once more
   engine.disk.listFailing.add(EVENTS)
   await engine.advance(10_000)
   expect(toasts()).toHaveLength(told + 3)
-  expect(ids()).toEqual(['design-v2', 'late-one'])
+  expect(ids()).toEqual(['notes-app', 'late-one'])
 })
 
 // ---------------------------------------------------------------- a disk that stalls
@@ -169,8 +169,8 @@ test('io: a disk call that never answers is given up on; the tool call is told, 
 
   // a stalled disk: listing events/ never comes back, and a second call waits its turn behind the first
   engine.disk.hanging.add(EVENTS)
-  const stuck = rt.toolCall(p, 'decision_note', { id: 'design-v2', text: 'first' })
-  const behind = rt.toolCall(p, 'decision_note', { id: 'design-v2', text: 'second' })
+  const stuck = rt.toolCall(p, 'decision_note', { id: 'notes-app', text: 'first' })
+  const behind = rt.toolCall(p, 'decision_note', { id: 'notes-app', text: 'second' })
   await engine.advance(0)
   await engine.advance(29_000) // the polls that fall due meanwhile wait in the same line
   expect(eventFiles(engine)).toHaveLength(files)
@@ -183,11 +183,11 @@ test('io: a disk call that never answers is given up on; the tool call is told, 
   })
 
   // everything that was waiting runs now, in its turn
-  expect(text(await behind)).toBe('Noted on design-v2')
+  expect(text(await behind)).toBe('Noted on notes-app')
   expect(eventsOf(engine).filter(e => e.op === 'note').map(e => e.text)).toEqual(['second'])
   dropEvent(engine, 'after-stall')
   await engine.advance(5000)
-  expect(engine.cells.model.nodes.map(n => n.id)).toEqual(['design-v2', 'after-stall'])
+  expect(engine.cells.model.nodes.map(n => n.id)).toEqual(['notes-app', 'after-stall'])
   expect(text(await rt.toolCall(p, 'decision_note', { id: 'after-stall', text: 'third' }))).toBe('Noted on after-stall')
 })
 
@@ -220,7 +220,7 @@ test('io: a command that fails inside the mod answers with a sentence, in the la
 // ---------------------------------------------------------------- start
 
 test('start: a config.json that is there but cannot be read just now is never written over', async () => {
-  const theirs = `${JSON.stringify({ v: 1, title: 'theirs', startedAt: '2026-10-01T09:00:00.000+00:00', recording: true, display: { asciiGlyphs: false, autoOpen: true, language: 'auto' }, futureKey: 'kept' }, null, 2)}\n`
+  const theirs = `${JSON.stringify({ v: 1, title: 'theirs', startedAt: '2026-10-01T09:00:00.000+00:00', recording: true, display: { asciiGlyphs: false, autoOpen: true, language: 'auto', translate: true }, futureKey: 'kept' }, null, 2)}\n`
   const e = new FakeEngine()
   e.put(configPath(), theirs)
   e.disk.failing.add(configPath())

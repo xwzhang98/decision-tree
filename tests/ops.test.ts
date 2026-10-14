@@ -35,15 +35,15 @@ function expectError(d: Done): string {
 
 test('start: writes config.json, a start event and the optional root, with the status command', async () => {
   const { disk, journal, ctx } = setup()
-  const r = await startRecord(ctx, { title: 'orders', rootTitle: 'design v2 定稿', statusArgv: ['bash', 'scripts/status.sh'] })
-  expect(expectOk(r)).toBe('Started recording decisions for orders, root design-v2')
+  const r = await startRecord(ctx, { title: 'orders', rootTitle: 'notes app 立项', statusArgv: ['bash', 'scripts/status.sh'] })
+  expect(expectOk(r)).toBe('Started recording decisions for orders, root notes-app')
   const cfg = parseConfig(disk.text(journal.configPath))
   expect('config' in cfg && cfg.config.title).toBe('orders')
   expect('config' in cfg && cfg.config.status?.argv).toEqual(['bash', 'scripts/status.sh'])
   const m = journal.model()
   expect(m.isStarted).toBe(true)
   expect(m.nodes).toHaveLength(1)
-  expect(m.nodes[0]).toMatchObject({ id: 'design-v2', title: 'design v2 定稿', trunk: true, kind: 'milestone', status: 'adopted', parent: null })
+  expect(m.nodes[0]).toMatchObject({ id: 'notes-app', title: 'notes app 立项', trunk: true, kind: 'milestone', status: 'adopted', parent: null })
 })
 
 test('start: without a root title only the config and the start event are written', async () => {
@@ -82,31 +82,31 @@ test('start: a config.json that is there, or cannot be read just now, is never o
 test('record: adds a node under a parent, answers the receipt, and picks a slug id', async () => {
   const { journal, ctx } = setup()
   await startRecord(ctx, { title: 'p' })
-  const first = await recordNode(ctx, { title: 'Shared sockets adopted', parent: null, status: 'adopted', trunk: true })
-  expect(expectOk(first)).toBe('Recorded shared-sockets-adopted (root, Adopted)')
+  const first = await recordNode(ctx, { title: 'Local storage adopted', parent: null, status: 'adopted', trunk: true })
+  expect(expectOk(first)).toBe('Recorded local-storage-adopted (root, adopted)')
   const second = await recordNode(ctx, {
-    id: 'v22-adopted',
-    title: 'Build version fixed at v2.2',
-    parent: 'shared-sockets-adopted',
+    id: 'merge-adopted',
+    title: 'Merge rule fixed at v1.2',
+    parent: 'local-storage-adopted',
     status: 'adopted',
     decidedBy: 'user',
-    summary: 'Use ratios for RAM, pools and queue sizes.',
-    evidence: [{ label: 'warmed P99', value: -12.6, ci: '[-15.1, -10.4]', run: 'v22 s0' }],
-    sources: ['reports/design_v22.md'],
+    summary: 'Use ratios for RAM, caches and queue sizes.',
+    evidence: [{ label: 'warm cold start', value: -17.4, ci: '[-19.8, -15.3]', run: 'bench s0' }],
+    sources: ['reports/merge_rules.md'],
   })
-  expect(expectOk(second)).toBe('Recorded v22-adopted (under shared-sockets-adopted, Adopted)')
-  const n = journal.model().nodes.find(x => x.id === 'v22-adopted')!
-  expect(n).toMatchObject({ parent: 'shared-sockets-adopted', decidedBy: 'user', createdBy: 'model' })
-  expect(n.evidence).toEqual([{ label: 'warmed P99', value: '-12.6', ci: '[-15.1, -10.4]', run: 'v22 s0' }])
-  expect(n.sources).toEqual(['reports/design_v22.md'])
+  expect(expectOk(second)).toBe('Recorded merge-adopted (under local-storage-adopted, adopted)')
+  const n = journal.model().nodes.find(x => x.id === 'merge-adopted')!
+  expect(n).toMatchObject({ parent: 'local-storage-adopted', decidedBy: 'user', createdBy: 'model' })
+  expect(n.evidence).toEqual([{ label: 'warm cold start', value: '-17.4', ci: '[-19.8, -15.3]', run: 'bench s0' }])
+  expect(n.sources).toEqual(['reports/merge_rules.md'])
 })
 
 test('record: a Chinese title gets an automatic id, a taken id gets a suffix, a title piece names the parent', async () => {
   const { journal, ctx } = setup()
   await startRecord(ctx, { title: 'p' })
-  const a = await recordNode(ctx, { title: '连接池采用', parent: null, status: 'adopted' })
+  const a = await recordNode(ctx, { title: '存储层采用', parent: null, status: 'adopted' })
   expect(a.ok && a.id).toMatch(/^d-[a-z0-9]+$/)
-  const b = await recordNode(ctx, { id: 'same-id', title: 'one', parent: '连接池', status: 'planned' })
+  const b = await recordNode(ctx, { id: 'same-id', title: 'one', parent: '存储层', status: 'planned' })
   const c = await recordNode(ctx, { id: 'same-id', title: 'two', parent: null, status: 'planned' })
   expect(b.ok && b.id).toBe('same-id')
   expect(c.ok && c.id).toBe('same-id-2')
@@ -153,18 +153,18 @@ test('update: changes status with a decision time, appends evidence once, and su
   await recordNode(ctx, { id: 'old-take', title: 'old take', parent: null, status: 'in-progress' })
   await recordNode(ctx, { id: 'new-take', title: 'new take', parent: null, status: 'adopted' })
 
-  const r1 = await updateNode(ctx, { id: 'old-take', status: 'adopted', summary: 'worked', addEvidence: [{ label: 'seed 0', value: '-12.6%' }] })
-  expect(expectOk(r1)).toBe('Updated old-take: status Adopted, summary, 1 evidence added')
+  const r1 = await updateNode(ctx, { id: 'old-take', status: 'adopted', summary: 'worked', addEvidence: [{ label: 'run 0', value: '-17.4%' }] })
+  expect(expectOk(r1)).toBe('Updated old-take: status adopted, summary, 1 evidence added')
   const n1 = journal.model().nodes.find(n => n.id === 'old-take')!
   expect(n1.status).toBe('adopted')
   expect(n1.decidedAt).toMatch(/^2026-10-/)
 
-  const r2 = await updateNode(ctx, { id: 'old-take', addEvidence: [{ label: 'seed 0', value: '-12.6%' }, { label: 'seed 1', value: '-13.5%' }] })
+  const r2 = await updateNode(ctx, { id: 'old-take', addEvidence: [{ label: 'run 0', value: '-17.4%' }, { label: 'run 1', value: '-7.4%' }] })
   expect(expectOk(r2)).toBe('Updated old-take: 1 evidence added')
   expect(journal.model().nodes.find(n => n.id === 'old-take')!.evidence).toHaveLength(2)
 
   const r3 = await updateNode(ctx, { id: 'old-take', supersededBy: 'new-take' })
-  expect(expectOk(r3)).toContain('status Superseded')
+  expect(expectOk(r3)).toContain('status superseded')
   expect(expectOk(r3)).toContain('superseded by new-take')
   const n3 = journal.model().nodes.find(n => n.id === 'old-take')!
   expect(n3).toMatchObject({ status: 'superseded', supersededBy: 'new-take' })
@@ -203,21 +203,21 @@ test('note, retract and the receipts in Chinese', async () => {
   const { journal, make } = setup('cccccc', 'zh')
   const ctx = make(journal)
   await startRecord(ctx, { title: 'p' })
-  const rec = await recordNode(ctx, { id: 'v22-adopted', title: '构建版本定为 v2.2', parent: null, status: 'adopted' })
-  expect(expectOk(rec)).toBe('已记录 v22-adopted（根节点，采用）')
-  expect(expectOk(await noteNode(ctx, { id: '构建版本', text: '两个 seed 方向一致' }))).toBe('已给 v22-adopted 加备注')
-  expect(journal.model().nodes[0]!.notes[0]!.text).toBe('两个 seed 方向一致')
-  expect(expectError(await noteNode(ctx, { id: 'v22-adopted', text: '  ' }))).toBe('text is required')
-  expect(expectOk(await retractNode(ctx, 'v22-adopted', '记错了'))).toBe('已撤销 v22-adopted')
+  const rec = await recordNode(ctx, { id: 'merge-adopted', title: '合并规则定为 v1.2', parent: null, status: 'adopted' })
+  expect(expectOk(rec)).toBe('已记录 merge-adopted（根 node，adopted）')
+  expect(expectOk(await noteNode(ctx, { id: '合并规则', text: '两次 run 方向一致' }))).toBe('已给 merge-adopted 加 note')
+  expect(journal.model().nodes[0]!.notes[0]!.text).toBe('两次 run 方向一致')
+  expect(expectError(await noteNode(ctx, { id: 'merge-adopted', text: '  ' }))).toBe('text is required')
+  expect(expectOk(await retractNode(ctx, 'merge-adopted', '记错了'))).toBe('已撤销 merge-adopted')
   expect(journal.model().nodes[0]!.retracted).toMatchObject({ reason: '记错了', actor: 'model' })
-  expect(expectError(await retractNode(ctx, 'v22-adopted', 'again'))).toContain('already retracted')
+  expect(expectError(await retractNode(ctx, 'merge-adopted', 'again'))).toContain('already retracted')
 })
 
 test('manual operations are written as the user', async () => {
   const { journal, make } = setup()
   const ctx = make(journal, 'user')
   await startRecord(ctx, { title: 'p' })
-  const r = await addNode(ctx, { title: '3 proxies', parent: null, status: 'planned', kind: 'decision', id: null, trunk: false })
+  const r = await addNode(ctx, { title: '3 workers', parent: null, status: 'planned', kind: 'decision', id: null, trunk: false })
   expect(r.ok).toBe(true)
   expect(journal.model().nodes[0]).toMatchObject({ createdBy: 'user', status: 'planned' })
 })
@@ -393,14 +393,14 @@ test('errors the person reads are in their language; the ones the model reads st
   ]
   const files = disk.files.size
   expect(await mistakes(person)).toEqual([
-    '需要 parent（节点 id；根节点用 null）',
-    '标题太长（200 > 120 个字符）；标题只写一行，其余放进 summary',
-    '需要节点 id',
-    '没有节点 "ghost"；用 decision_tree 查看 id',
+    '需要 parent（node id；根 node 用 null）',
+    'title 太长（200 > 120 个字符）；title 只写一行，其余放进 summary',
+    '需要 node id',
+    '没有 node "ghost"；用 decision_tree 查看 id',
     '把 node-aa 移到 node-bb 下会形成环',
     'node-aa 不能取代自己',
     'node-cc 已撤销，不能再修改',
-    '需要文字',
+    '需要 text',
     'node-cc 已经撤销了',
   ])
   const forModel = [

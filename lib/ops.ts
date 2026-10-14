@@ -9,13 +9,14 @@
 import type { DtActor, DtDecidedBy, DtEvidence, DtForkBase, DtKind, DtLang, DtNode, DtNodeFields, DtPatch, DtStatus } from '../types'
 import { defaultConfig, parseConfig, serializeConfig, setTree, withStatus } from './config'
 import { ID_PATTERN, MAIN, autoId, isDecider, isIso, isKind, isStatus, isTreeName, isoLocal, slugify, treeNameOf, uniqueId } from './events'
-import { eventsText, nodesText, statusLabel, t } from './i18n'
+import { eventsText, hasHan, nodesText, statusLabel, t } from './i18n'
 import type { Key } from './i18n'
 import type { Journal } from './journal'
 import { firstLine } from './journal'
 import { evidenceKey, evidenceOf } from './replay'
 import { ancestorIds, buildIndex, resolveRef } from './tree'
 import type { TreeIndex } from './tree'
+import type { TmPair } from './tm'
 import { describeEvent, forkText, numbered, resolveVersion, whenOf } from './versions'
 import type { Resolved as Version } from './versions'
 import { oneLine, padEnd, padStart, sanitize } from './width'
@@ -25,6 +26,8 @@ export type Ctx = {
   now: () => number
   lang: DtLang
   actor: DtActor
+  /** Keeps the English versions that came with a call in the translation memory (absent where nothing keeps them). */
+  english?: (pairs: TmPair[]) => Promise<void>
 }
 
 export type Done = { ok: true; text: string; id?: string } | { ok: false; error: string }
@@ -226,6 +229,99 @@ function problems(errors: string[]): Done {
   return fail(errors.slice(0, 4).join('; '))
 }
 
+// ---------------------------------------------------------------- the English version that comes with a call
+
+/**
+ * The English version of the text fields of a call (`en` in the arguments of the tools): given by the model that
+ * wrote them in Chinese, so the pane can show English without asking for a translation.
+ */
+type English = {
+  title?: string
+  summary?: string
+  rationale?: string
+  evidence?: Partial<DtEvidence>[]
+  addEvidence?: Partial<DtEvidence>[]
+  /** `decision_note`: the English version of the note. */
+  text?: string
+}
+
+/** One English text of `en`: trimmed, one line when it belongs on one; an error when it has Chinese in it. */
+function englishText(x: unknown, name: string, oneLined: boolean, errors: string[], lang: DtLang): string | undefined {
+  const s = scalarText(x)
+  if (s === null) return undefined
+  const text = oneLined ? oneLine(s) : sanitize(s).trim()
+  if (text === '') return undefined
+  if (hasHan(text)) {
+    errors.push(t(lang, 'e.enBad', { field: name }))
+    return undefined
+  }
+  return text
+}
+
+function englishEvidence(raw: unknown, name: string, errors: string[], lang: DtLang): Partial<DtEvidence>[] | undefined {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw)) {
+    errors.push(t(lang, 'e.enShape'))
+    return undefined
+  }
+  return raw.slice(0, MAX_LIST).map((item, k) => {
+    const out: Partial<DtEvidence> = {}
+    if (!isLoose(item)) return out
+    for (const key of ['label', 'value', 'note'] as const) {
+      const text = englishText(item[key], `en.${name}[${k}].${key}`, true, errors, lang)
+      if (text !== undefined) out[key] = text
+    }
+    return out
+  })
+}
+
+/** Reads `en` of `decision_record` and `decision_update`; what is wrong with it goes into `errors`. */
+function readEnglish(raw: unknown, errors: string[], lang: DtLang): English {
+  if (raw === undefined || raw === null) return {}
+  if (!isLoose(raw)) {
+    errors.push(t(lang, 'e.enShape'))
+    return {}
+  }
+  const out: English = {}
+  const title = englishText(raw.title, 'en.title', true, errors, lang)
+  const summary = englishText(raw.summary, 'en.summary', true, errors, lang)
+  const rationale = englishText(raw.rationale, 'en.rationale', false, errors, lang)
+  if (title !== undefined) out.title = title
+  if (summary !== undefined) out.summary = summary
+  if (rationale !== undefined) out.rationale = rationale
+  const evidence = englishEvidence(raw.evidence, 'evidence', errors, lang)
+  const addEvidence = englishEvidence(raw.addEvidence, 'addEvidence', errors, lang)
+  if (evidence !== undefined) out.evidence = evidence
+  if (addEvidence !== undefined) out.addEvidence = addEvidence
+  return out
+}
+
+/** The pair a text written in Chinese and its English version make; nothing when the text is not Chinese or has no English version. */
+function pairOf(recorded: string | null | undefined, english: string | undefined, into: TmPair[]): void {
+  if (typeof recorded === 'string' && english !== undefined && hasHan(recorded)) into.push({ from: recorded, to: english })
+}
+
+function evidencePairs(recorded: readonly DtEvidence[] | null | undefined, english: readonly Partial<DtEvidence>[] | undefined, into: TmPair[]): void {
+  if (recorded == null || english === undefined) return
+  english.forEach((en, k) => {
+    const rec = recorded[k]
+    if (rec === undefined) return
+    pairOf(rec.label, en.label, into)
+    pairOf(rec.value, en.value, into)
+    pairOf(rec.note, en.note, into)
+  })
+}
+
+/** Hands the English versions to whatever keeps them. A memory that cannot be written costs nothing: the translator will make them. */
+async function keepEnglish(ctx: Ctx, pairs: TmPair[]): Promise<void> {
+  if (pairs.length === 0 || ctx.english === undefined) return
+  try {
+    await ctx.english(pairs)
+  } catch {
+    // (the record is written; its English version is made in the background instead)
+  }
+}
+
 // ---------------------------------------------------------------- helpers
 
 async function loadIndex(ctx: Ctx): Promise<TreeIndex> {
@@ -287,6 +383,7 @@ export async function recordNode(ctx: Ctx, input: Loose): Promise<Done> {
       if (input.title === undefined) errors.unshift(say(ctx, 'e.fieldRequired', { field: 'title' }))
       if (input.status === undefined) errors.unshift(say(ctx, 'e.fieldRequired', { field: 'status' }))
       if (input.parent === undefined) errors.unshift(say(ctx, 'e.parentRequired'))
+      const en = readEnglish(input.en, errors, langOf(ctx))
       if (errors.length > 0) return problems(errors)
       // a matter the person settles themselves is theirs, even when they did not say so
       if (fields.decidedBy === undefined && ctx.actor === 'user' && fields.status !== undefined && DECIDED.includes(fields.status)) fields.decidedBy = 'user'
@@ -301,6 +398,13 @@ export async function recordNode(ctx: Ctx, input: Loose): Promise<Done> {
       await ctx.journal.sync()
       const mine = ctx.journal.model().nodes.find(n => n.id === id)
       if (mine !== undefined && mine.addedBy !== name) continue
+
+      const pairs: TmPair[] = []
+      pairOf(node.title, en.title, pairs)
+      pairOf(node.summary, en.summary, pairs)
+      pairOf(node.rationale, en.rationale, pairs)
+      evidencePairs(node.evidence, en.evidence, pairs)
+      await keepEnglish(ctx, pairs)
 
       const status = statusLabel(ctx.lang, node.status)
       const text = parent === null ? t(ctx.lang, 'r.recordedRoot', { id, status }) : t(ctx.lang, 'r.recorded', { id, parent, status })
@@ -328,6 +432,7 @@ export async function updateNode(ctx: Ctx, input: Loose): Promise<Done> {
     if (node.retracted !== undefined) return fail(say(ctx, 'e.retractedNoChange', { id: node.id }))
 
     const { fields: f, errors } = readFields(input, idx, langOf(ctx))
+    const en = readEnglish(input.en, errors, langOf(ctx))
     if (errors.length > 0) return problems(errors)
     if (f.supersededBy === node.id) return fail(say(ctx, 'e.supersedeSelf', { id: node.id }))
     if (f.parent !== undefined && f.parent !== null && (f.parent === node.id || ancestorIds(idx, f.parent).includes(node.id))) {
@@ -403,7 +508,16 @@ export async function updateNode(ctx: Ctx, input: Loose): Promise<Done> {
     const currentParent = idx.parentOf.get(node.id) ?? null
     const moves = f.parent !== undefined && f.parent !== currentParent
 
+    // the English version is of the node as it reads after this call (the new text where the call gives one, else the one it has)
+    const pairs: TmPair[] = []
+    pairOf(f.title ?? node.title, en.title, pairs)
+    pairOf(f.summary === undefined ? node.summary : f.summary, en.summary, pairs)
+    pairOf(f.rationale === undefined ? node.rationale : f.rationale, en.rationale, pairs)
+    evidencePairs(f.evidence === undefined ? node.evidence : f.evidence, en.evidence, pairs)
+    evidencePairs(f.addEvidence, en.addEvidence, pairs)
+
     if (Object.keys(patch).length === 0 && !moves) {
+      await keepEnglish(ctx, pairs)
       return ok(t(lang, 'r.noChange', { id: node.id }), node.id)
     }
     if (Object.keys(patch).length > 0) {
@@ -413,6 +527,7 @@ export async function updateNode(ctx: Ctx, input: Loose): Promise<Done> {
       await ctx.journal.append({ op: 'move', actor: ctx.actor, id: node.id, parent: f.parent ?? null }, ctx.now())
       changes.push(f.parent === null ? t(lang, 'r.movedRoot', { id: node.id }) : t(lang, 'r.moved', { id: node.id, parent: f.parent! }))
     }
+    await keepEnglish(ctx, pairs)
     if (changes.length === 0) changes.push(t(lang, 'r.changeOther', { fields: Object.keys(patch).join(', ') }))
     return ok(t(lang, 'r.updated', { id: node.id, changes: changes.join(listSep(lang)) }), node.id)
   } catch (err) {
@@ -431,7 +546,18 @@ export async function noteNode(ctx: Ctx, input: Loose): Promise<Done> {
     const text = raw === null ? '' : sanitize(raw).trim().slice(0, MAX_NOTE)
     if (text === '') return fail(say(ctx, 'e.textRequired'))
     if (target.node.retracted !== undefined) return fail(say(ctx, 'e.retractedNoNote', { id: target.node.id }))
+    // `en` of a note is the English version of its text, as a string
+    const errors: string[] = []
+    let english: string | undefined
+    if (input.en !== undefined && input.en !== null) {
+      if (typeof input.en !== 'string') errors.push(say(ctx, 'e.enNoteShape'))
+      else english = englishText(input.en, 'en', false, errors, langOf(ctx))
+    }
+    if (errors.length > 0) return problems(errors)
     await ctx.journal.append({ op: 'note', actor: ctx.actor, id: target.node.id, text }, ctx.now())
+    const pairs: TmPair[] = []
+    pairOf(text, english, pairs)
+    await keepEnglish(ctx, pairs)
     return ok(t(ctx.lang, 'r.noted', { id: target.node.id }), target.node.id)
   } catch (err) {
     return wrapWrite(err, ctx)

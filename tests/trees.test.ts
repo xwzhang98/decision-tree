@@ -37,11 +37,11 @@ function expectError(d: Done): string {
 }
 
 const MAINLINE: [id: string, title: string, parent: string | null, status: DtStatus][] = [
-  ['design-v2', 'design v2 定稿', null, 'adopted'],
-  ['dbpool-adopted', '连接池采用', 'design-v2', 'adopted'],
-  ['v22-adopted', '构建版本定为 v2.2', 'design-v2', 'adopted'],
-  ['v22-rerun', '构建版本 v2.2 重跑', 'v22-adopted', 'adopted'],
-  ['sql-next', '下一步做 sql', 'v22-adopted', 'planned'],
+  ['notes-app', 'notes app 立项', null, 'adopted'],
+  ['sqlite-adopted', '存储层采用', 'notes-app', 'adopted'],
+  ['merge-adopted', '合并规则定为 v1.2', 'notes-app', 'adopted'],
+  ['merge-rerun', '合并规则 v1.2 重跑', 'merge-adopted', 'adopted'],
+  ['sql-next', '下一步做 sql', 'merge-adopted', 'planned'],
 ]
 const IDS = MAINLINE.map(([id]) => id)
 
@@ -91,20 +91,20 @@ const whenOfFile = (name: string): string => when(stampMs(name)!)
 
 test('tree names: used as they are, or made into one when only punctuation and capitals have to change', async () => {
   // a name that already is one stays as it is
-  for (const name of ['sql-v3', 'v2', 'main-2', '2026-10-08', 'a'.repeat(32)]) {
+  for (const name of ['side-b', 'v2', 'main-2', '2026-10-08', 'a'.repeat(32)]) {
     expect(treeNameOf(name)).toEqual({ name })
     expect(isTreeName(name)).toBe(true)
   }
   // capitals, spaces and punctuation become single hyphens, and none is left at an end
-  expect(treeNameOf('SQL v3')).toEqual({ name: 'sql-v3' })
-  expect(treeNameOf('  Shared Sockets!  ')).toEqual({ name: 'shared-sockets' })
+  expect(treeNameOf('Side B')).toEqual({ name: 'side-b' })
+  expect(treeNameOf('  Local Storage!  ')).toEqual({ name: 'local-storage' })
   expect(treeNameOf('try #2: no-diff?')).toEqual({ name: 'try-2-no-diff' })
-  expect(treeNameOf('v2.2_rerun')).toEqual({ name: 'v2-2-rerun' })
+  expect(treeNameOf('v1.2_rerun')).toEqual({ name: 'v1-2-rerun' })
   expect(treeNameOf('--lead and trail--')).toEqual({ name: 'lead-and-trail' })
   // a long one is cut at 32 characters, and not in the middle of a hyphen
-  expect(treeNameOf('shared sockets with the new design v2 final')).toEqual({ name: 'shared-sockets-with-the-new-desi' })
+  expect(treeNameOf('local storage with the new editor final')).toEqual({ name: 'local-storage-with-the-new-edito' })
   expect(treeNameOf(`${'x'.repeat(31)} tail`)).toEqual({ name: 'x'.repeat(31) })
-  expect(isTreeName('SQL v3')).toBe(false)
+  expect(isTreeName('Side B')).toBe(false)
 
   // what cannot be a name says why
   expect(treeNameOf('')).toEqual({ error: 'empty' })
@@ -117,12 +117,12 @@ test('tree names: used as they are, or made into one when only punctuation and c
   expect(treeNameOf('v')).toEqual({ error: 'invalid' })
   expect(treeNameOf('!!!')).toEqual({ error: 'invalid' })
 
-  // a tree opened as `SQL v3` is the tree `sql-v3`
+  // a tree opened as `Side B` is the tree `side-b`
   const { disk, ctx } = await project()
-  const r = await newTree(ctx, { name: 'SQL v3' })
-  expect(expectOk(r)).toContain('Opened tree sql-v3, from main at #6')
-  expect(r.ok ? r.id : undefined).toBe('sql-v3')
-  expect(namesOf(disk, 'sql-v3')).toHaveLength(7)
+  const r = await newTree(ctx, { name: 'Side B' })
+  expect(expectOk(r)).toContain('Opened tree side-b, from main at #6')
+  expect(r.ok ? r.id : undefined).toBe('side-b')
+  expect(namesOf(disk, 'side-b')).toHaveLength(7)
 })
 
 // ---------------------------------------------------------------- opening a tree
@@ -143,8 +143,8 @@ test('new tree: a long --title is cut at a character, and what cannot be shown o
 
   // the line breaks and control characters of a pasted label go before the cut, and a label with nothing left has no text at all
   const c = await project()
-  expectOk(await newTree(c.ctx, { name: 'cut-c', title: 'SQL\n第三版\u0007 再试' }))
-  expect(forkOf(c.disk, 'cut-c').text).toBe('SQL 第三版 再试')
+  expectOk(await newTree(c.ctx, { name: 'cut-c', title: '另一条\n路线\u0007 再试' }))
+  expect(forkOf(c.disk, 'cut-c').text).toBe('另一条 路线 再试')
   const d = await project()
   expectOk(await newTree(d.ctx, { name: 'cut-d', title: ' \n\u0007 ' }))
   expect('text' in forkOf(d.disk, 'cut-d')).toBe(false)
@@ -160,12 +160,12 @@ test('new tree: a copy of everything so far, then a fork event; the original doe
   const configBefore = JSON.parse(disk.text(CONFIG))
   const writes = disk.writes.length
 
-  const r = await newTree(ctx, { name: 'sql-v3' })
-  expect(expectOk(r)).toBe(`Opened tree sql-v3, from main at #6 (${when(T0 + 6 * MIN)}): 5 nodes. Recording there now.`)
-  expect(r.ok ? r.id : undefined).toBe('sql-v3')
+  const r = await newTree(ctx, { name: 'side-b' })
+  expect(expectOk(r)).toBe(`Opened tree side-b, from main at #6 (${when(T0 + 6 * MIN)}): 5 nodes. Recording there now.`)
+  expect(r.ok ? r.id : undefined).toBe('side-b')
 
   // the six files, byte for byte under the same names, and the fork event after them
-  const copy = filesOf(disk, 'sql-v3')
+  const copy = filesOf(disk, 'side-b')
   expect(copy).toHaveLength(7)
   expect(copy.slice(0, 6)).toEqual(main)
   expect(copy[6]![0] > main[5]![0]).toBe(true)
@@ -174,13 +174,13 @@ test('new tree: a copy of everything so far, then a fork event; the original doe
   expect('text' in fork).toBe(false)
 
   // the new tree replays to the same decisions and knows where it began
-  const m = (await reopen(disk, 'sql-v3')).model()
+  const m = (await reopen(disk, 'side-b')).model()
   expect(m.nodes.map(n => n.id)).toEqual(IDS)
   expect(m.isStarted).toBe(true)
   expect(m.fork).toMatchObject({ tree: 'main', at: main[5]![0], count: 6, actor: 'model' })
   expect([m.eventCount, m.warningCount]).toEqual([7, 0])
-  const snapshot = JSON.parse(disk.text(`${DIR}/trees/sql-v3/tree.json`))
-  expect(snapshot).toMatchObject({ project: 'orders', tree: 'sql-v3', fork: { tree: 'main', count: 6 } })
+  const snapshot = JSON.parse(disk.text(`${DIR}/trees/side-b/tree.json`))
+  expect(snapshot).toMatchObject({ project: 'orders', tree: 'side-b', fork: { tree: 'main', count: 6 } })
   expect(snapshot.nodes).toHaveLength(5)
 
   // main: the same files, nothing written to its folder, and still no fork of its own
@@ -188,43 +188,43 @@ test('new tree: a copy of everything so far, then a fork event; the original doe
   expect(disk.writes.slice(writes).filter(path => path.startsWith(`${DIR}/events/`))).toEqual([])
   expect((await reopen(disk, 'main')).model().fork).toBeNull()
   // only config.json moved, and only by naming the new tree
-  expect(JSON.parse(disk.text(CONFIG))).toEqual({ ...configBefore, tree: 'sql-v3' })
+  expect(JSON.parse(disk.text(CONFIG))).toEqual({ ...configBefore, tree: 'side-b' })
 })
 
 test('new tree: what is recorded afterwards goes only to the tree it is recorded in', async () => {
   const { disk, journal, ctx, make } = await project()
-  expectOk(await newTree(ctx, { name: 'sql-v3', at: '#4' }))
+  expectOk(await newTree(ctx, { name: 'side-b', at: '#4' }))
   const mainFiles = filesOf(disk, 'main')
-  const copied = namesOf(disk, 'sql-v3')
+  const copied = namesOf(disk, 'side-b')
   expect(copied).toHaveLength(5) // four events and the fork event
 
   // a session that follows config.json records into the new tree
-  const inSql = make(journal.sibling('sql-v3'))
-  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'design-v2', status: 'planned' }))
-  expectOk(await updateNode(inSql, { id: 'dbpool-adopted', status: 'rejected' }))
+  const inSql = make(journal.sibling('side-b'))
+  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'notes-app', status: 'planned' }))
+  expectOk(await updateNode(inSql, { id: 'sqlite-adopted', status: 'rejected' }))
   expectOk(await noteNode(inSql, { id: 'sql-first', text: 'run it twice' }))
   expect(filesOf(disk, 'main')).toEqual(mainFiles)
-  const own = namesOf(disk, 'sql-v3')
+  const own = namesOf(disk, 'side-b')
   expect(own).toHaveLength(8)
   expect(own.slice(0, 5)).toEqual(copied) // what came after sorts after the fork event
-  expect(opsOf(disk, 'sql-v3').slice(4)).toEqual(['fork', 'add', 'update', 'note'])
+  expect(opsOf(disk, 'side-b').slice(4)).toEqual(['fork', 'add', 'update', 'note'])
 
-  const sql = (await reopen(disk, 'sql-v3')).model()
-  expect(sql.nodes.map(n => n.id)).toEqual(['design-v2', 'dbpool-adopted', 'v22-adopted', 'sql-first'])
-  expect(sql.nodes.find(n => n.id === 'dbpool-adopted')!.status).toBe('rejected')
+  const sql = (await reopen(disk, 'side-b')).model()
+  expect(sql.nodes.map(n => n.id)).toEqual(['notes-app', 'sqlite-adopted', 'merge-adopted', 'sql-first'])
+  expect(sql.nodes.find(n => n.id === 'sqlite-adopted')!.status).toBe('rejected')
   expect(sql.nodes.find(n => n.id === 'sql-first')!.notes.map(n => n.text)).toEqual(['run it twice'])
   // main did not hear of any of it
   const mainBefore = (await reopen(disk, 'main')).model()
   expect(mainBefore.nodes.map(n => n.id)).toEqual(IDS)
-  expect(mainBefore.nodes.find(n => n.id === 'dbpool-adopted')!.status).toBe('adopted')
+  expect(mainBefore.nodes.find(n => n.id === 'sqlite-adopted')!.status).toBe('adopted')
 
   // and the other way round: a session that is on main records into main, and the new tree does not hear of it
   const next = await recordNode(ctx, { id: 'sql-first', title: 'Main has its own', parent: 'sql-next', status: 'planned' })
   expect(next.ok ? next.id : undefined).toBe('sql-first') // ids are per tree: the same one is free in main
   expect(namesOf(disk, 'main')).toHaveLength(7)
-  expect(namesOf(disk, 'sql-v3')).toEqual(own)
+  expect(namesOf(disk, 'side-b')).toEqual(own)
   const mainNow = (await reopen(disk, 'main')).model()
-  const sqlNow = (await reopen(disk, 'sql-v3')).model()
+  const sqlNow = (await reopen(disk, 'side-b')).model()
   expect(mainNow.nodes.find(n => n.id === 'sql-first')!.title).toBe('Main has its own')
   expect(sqlNow.nodes.find(n => n.id === 'sql-first')!.title).toBe('SQL first try')
   expect(sqlNow.nodes).toHaveLength(4)
@@ -241,7 +241,7 @@ test('new tree: --at #N copies the first N events', async () => {
   expect(early.slice(0, 3)).toEqual(main.slice(0, 3))
   expect(JSON.parse(early[3]![1]).base).toEqual({ tree: 'main', at: main[2]![0], count: 3 })
   const m = (await reopen(disk, 'early')).model()
-  expect(m.nodes.map(n => n.id)).toEqual(['design-v2', 'dbpool-adopted'])
+  expect(m.nodes.map(n => n.id)).toEqual(['notes-app', 'sqlite-adopted'])
   expect(m.fork).toMatchObject({ tree: 'main', count: 3 })
   // the events after #3 stayed behind
   for (const [name] of main.slice(3)) expect(early.some(([n]) => n === name)).toBe(false)
@@ -260,7 +260,7 @@ test('new tree: --at #N copies the first N events', async () => {
 test('new tree: --at a node is the tree as it was when that node was recorded', async () => {
   const { disk, ctx } = await project()
   // main moves on: a summary on an early node (#7) and a late node (#8)
-  expectOk(await updateNode(ctx, { id: 'design-v2', summary: 'written after sql-next' }))
+  expectOk(await updateNode(ctx, { id: 'notes-app', summary: 'written after sql-next' }))
   expectOk(await recordNode(ctx, { id: 'late-node', title: 'A late decision', parent: null, status: 'planned' }))
 
   // by id: the tree right after that node's add, so the summary of #7 is not in it
@@ -278,11 +278,11 @@ test('new tree: --at a node is the tree as it was when that node was recorded', 
 
   // `node:` says it is a node; a piece of its title will do, in any script; the id may be in any case
   const ways = [
-    ['with-prefix', 'node:v22-adopted', 4],
-    ['with-title', '连接池', 3],
-    ['with-more-title', '定稿', 2],
+    ['with-prefix', 'node:merge-adopted', 4],
+    ['with-title', '存储层', 3],
+    ['with-more-title', '立项', 2],
     ['with-last-bit', '重跑', 5],
-    ['with-capitals', 'V22-ADOPTED', 4],
+    ['with-capitals', 'MERGE-ADOPTED', 4],
   ] as const
   for (const [name, spec, count] of ways) {
     const done = expectOk(await newTree(ctx, { name, at: spec }))
@@ -374,39 +374,39 @@ test('new tree: --stay opens it and leaves recording where it was', async () => 
 
 test('new tree: from another tree, and a fork of a fork carries one fork event, its own', async () => {
   const { disk, journal, ctx, make } = await project()
-  expectOk(await newTree(ctx, { name: 'sql-v3', at: '#4', stay: true }))
-  const inSql = make(journal.sibling('sql-v3'))
-  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'design-v2', status: 'planned' }))
+  expectOk(await newTree(ctx, { name: 'side-b', at: '#4', stay: true }))
+  const inSql = make(journal.sibling('side-b'))
+  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'notes-app', status: 'planned' }))
   expectOk(await recordNode(inSql, { id: 'sql-second', title: 'SQL second try', parent: 'sql-first', status: 'proposed' }))
-  // sql-v3: the four events it copied, its own fork event among them, then two of its own
-  const sql = filesOf(disk, 'sql-v3')
-  expect(opsOf(disk, 'sql-v3')).toEqual(['start', 'add', 'add', 'add', 'fork', 'add', 'add'])
+  // side-b: the four events it copied, its own fork event among them, then two of its own
+  const sql = filesOf(disk, 'side-b')
+  expect(opsOf(disk, 'side-b')).toEqual(['start', 'add', 'add', 'add', 'fork', 'add', 'add'])
   const sqlEvents = sql.filter((_, i) => i !== 4)
 
   // opened from the session that is on main, naming the tree to copy
-  const r = await newTree(ctx, { name: 'deeper', from: ' SQL-v3 ' })
-  expect(expectOk(r)).toBe(`Opened tree deeper, from sql-v3 at #6 (${whenOfFile(sql[6]![0])}): 5 nodes. Recording there now.`)
+  const r = await newTree(ctx, { name: 'deeper', from: ' Side-B ' })
+  expect(expectOk(r)).toBe(`Opened tree deeper, from side-b at #6 (${whenOfFile(sql[6]![0])}): 5 nodes. Recording there now.`)
   const deeper = filesOf(disk, 'deeper')
   expect(opsOf(disk, 'deeper')).toEqual(['start', 'add', 'add', 'add', 'add', 'add', 'fork']) // one fork event, and it is the last
-  expect(deeper.slice(0, 6)).toEqual(sqlEvents) // sql-v3's own fork event is left out
+  expect(deeper.slice(0, 6)).toEqual(sqlEvents) // side-b's own fork event is left out
   expect(deeper.some(([name]) => name === sql[4]![0])).toBe(false)
-  expect(JSON.parse(deeper[6]![1]).base).toEqual({ tree: 'sql-v3', at: sql[6]![0], count: 6 })
+  expect(JSON.parse(deeper[6]![1]).base).toEqual({ tree: 'side-b', at: sql[6]![0], count: 6 })
   const m = (await reopen(disk, 'deeper')).model()
-  expect(m.fork).toMatchObject({ tree: 'sql-v3', at: sql[6]![0], count: 6 })
-  expect(m.nodes.map(n => n.id)).toEqual(['design-v2', 'dbpool-adopted', 'v22-adopted', 'sql-first', 'sql-second'])
+  expect(m.fork).toMatchObject({ tree: 'side-b', at: sql[6]![0], count: 6 })
+  expect(m.nodes.map(n => n.id)).toEqual(['notes-app', 'sqlite-adopted', 'merge-adopted', 'sql-first', 'sql-second'])
   expect(m.warningCount).toBe(0)
 
   // #N counts events, not the fork marker that sits among them: #5 is the four copied and sql-first
-  expectOk(await newTree(ctx, { name: 'shallower', from: 'sql-v3', at: '#5' }))
+  expectOk(await newTree(ctx, { name: 'shallower', from: 'side-b', at: '#5' }))
   expect(namesOf(disk, 'shallower').slice(0, 5)).toEqual(sqlEvents.slice(0, 5).map(([name]) => name))
   expect(opsOf(disk, 'shallower')).toEqual(['start', 'add', 'add', 'add', 'add', 'fork'])
-  expect(JSON.parse(filesOf(disk, 'shallower')[5]![1]).base).toEqual({ tree: 'sql-v3', at: sql[5]![0], count: 5 })
+  expect(JSON.parse(filesOf(disk, 'shallower')[5]![1]).base).toEqual({ tree: 'side-b', at: sql[5]![0], count: 5 })
 
   // without --from it is the tree the session is in, and from inside a tree main can be named too
-  expect(expectOk(await newTree(inSql, { name: 'in-use', stay: true }))).toContain('from sql-v3 at #6')
+  expect(expectOk(await newTree(inSql, { name: 'in-use', stay: true }))).toContain('from side-b at #6')
   const back = await newTree(inSql, { name: 'from-main', from: 'main', at: '#2', stay: true })
   expect(expectOk(back)).toBe(
-    `Opened tree from-main, from main at #2 (${when(T0 + 2 * MIN)}): 1 node. Still recording in sql-v3; /decide tree use from-main switches.`,
+    `Opened tree from-main, from main at #2 (${when(T0 + 2 * MIN)}): 1 node. Still recording in side-b; /decide tree use from-main switches.`,
   )
   expect(opsOf(disk, 'from-main')).toEqual(['start', 'add', 'fork'])
 })
@@ -421,7 +421,7 @@ test('new tree: bad names, taken names, unknown bases, bad versions', async () =
   const refused = async (input: NewTreeInput) => expectError(await newTree(ctx, input))
 
   // names
-  expect(await refused({ name: '' })).toBe('a tree needs a name (letters, digits and hyphens, 2-32 characters, e.g. sql-v3)')
+  expect(await refused({ name: '' })).toBe('a tree needs a name (letters, digits and hyphens, 2-32 characters, e.g. crdt-engine)')
   expect(await refused({ name: 'Main' })).toBe('"main" is the first tree of the project; pick another name')
   expect(await refused({ name: ' 第三版 ' })).toBe(
     '"第三版" cannot be a tree name: use 2-32 letters, digits and hyphens (a longer or Chinese name goes in --title)',
@@ -440,7 +440,7 @@ test('new tree: bad names, taken names, unknown bases, bad versions', async () =
   expect(await refused({ name: 'new-one', at: local(T0 - 10 * MIN) })).toBe(
     `nothing had been recorded in main by then; its first event is from ${when(T0 + MIN)}`,
   )
-  expect(await refused({ name: 'new-one', at: 'v22' })).toBe('"v22" matches several nodes (v22-adopted, v22-rerun); use an id')
+  expect(await refused({ name: 'new-one', at: 'merge' })).toBe('"merge" matches several nodes (merge-adopted, merge-rerun); use an id')
   expect(await refused({ name: 'new-one', at: 'no such thing' })).toBe(
     'cannot tell which version "no such thing" is; use current, #N (see /decide tree log), a date or time such as 2026-10-08 17:44, or a node id',
   )
@@ -455,10 +455,10 @@ test('new tree: a project that is not recording has nothing to copy', async () =
   // no config.json: the project was never started
   const { disk, journal, ctx, make } = setup()
   const notStarted = 'Decisions are not being recorded in this project. Run /decide start [title] first.'
-  expect(expectError(await newTree(ctx, { name: 'sql-v3' }))).toBe(notStarted)
+  expect(expectError(await newTree(ctx, { name: 'side-b' }))).toBe(notStarted)
   expect(expectError(await newTree(ctx, { name: 'blank', empty: true }))).toBe(notStarted)
   const person = make(journal, 'user', 'zh')
-  expect(expectError(await newTree(person, { name: 'sql-v3' }))).toBe('这个项目还没有开始记录决定。先运行 /decide start [标题]。')
+  expect(expectError(await newTree(person, { name: 'side-b' }))).toBe('这个项目还没有开始记录决定。先运行 /decide start [title]。')
   expect(disk.files.size).toBe(0)
 
   // a config.json that cannot be read just now says nothing either way: it is not "not started" (which
@@ -466,21 +466,21 @@ test('new tree: a project that is not recording has nothing to copy', async () =
   // still nothing is written
   disk.put(CONFIG, serializeConfig(defaultConfig('orders', '2026-10-10T12:00:00.000+00:00')))
   disk.failing.add(CONFIG)
-  const unreadable = expectError(await newTree(ctx, { name: 'sql-v3' }))
+  const unreadable = expectError(await newTree(ctx, { name: 'side-b' }))
   expect(unreadable).toMatch(/^Cannot read config\.json just now \(EIO: cannot read .*config\.json\); nothing was changed\. Try again\.$/)
-  expect(expectError(await newTree(person, { name: 'sql-v3' }))).toMatch(/^现在读不了 config\.json（EIO: cannot read .*config\.json），什么都没改。请再试一次。$/)
+  expect(expectError(await newTree(person, { name: 'side-b' }))).toMatch(/^现在读不了 config\.json（EIO: cannot read .*config\.json），什么都没改。请再试一次。$/)
   expect(expectError(await useTree(ctx, 'main'))).toBe(unreadable)
   disk.failing.delete(CONFIG)
 
   // started in config.json but nothing recorded: there is no version to start from, and --empty is the way
   const nothing = 'tree main has no events yet, so there is no version to start from; use --empty for a blank tree'
-  expect(expectError(await newTree(ctx, { name: 'sql-v3' }))).toBe(nothing)
-  expect(expectError(await newTree(ctx, { name: 'sql-v3', at: '#1' }))).toBe(nothing)
+  expect(expectError(await newTree(ctx, { name: 'side-b' }))).toBe(nothing)
+  expect(expectError(await newTree(ctx, { name: 'side-b', at: '#1' }))).toBe(nothing)
   expect(disk.writes).toEqual([])
   expect([...disk.files.keys()]).toEqual([CONFIG])
-  const blank = await newTree(ctx, { name: 'sql-v3', empty: true })
-  expect(expectOk(blank)).toBe('Opened tree sql-v3, started empty: 0 nodes. Recording there now.')
-  expect(opsOf(disk, 'sql-v3')).toEqual(['start', 'fork'])
+  const blank = await newTree(ctx, { name: 'side-b', empty: true })
+  expect(expectOk(blank)).toBe('Opened tree side-b, started empty: 0 nodes. Recording there now.')
+  expect(opsOf(disk, 'side-b')).toEqual(['start', 'fork'])
 })
 
 test('new tree: a tree nobody opened is nothing to copy from, and a blank one is', async () => {
@@ -514,15 +514,15 @@ test('new tree: an earlier attempt that did not finish is taken over, or refused
   const put = (tree: string, [name, text]: [string, string]) => disk.put(`${eventsDirOf(tree)}/${name}`, text)
 
   // an attempt that stopped after two files, the second cut short: no fork event, so the tree is not there
-  put('sql-v3', main[0]!)
-  put('sql-v3', [main[1]![0], main[1]![1].slice(0, 12)])
-  expect((await reopen(disk, 'sql-v3')).model().fork).toBeNull()
-  expect(expectOk(await newTree(ctx, { name: 'sql-v3', at: '#4' }))).toContain('Opened tree sql-v3, from main at #4')
-  const taken = filesOf(disk, 'sql-v3')
+  put('side-b', main[0]!)
+  put('side-b', [main[1]![0], main[1]![1].slice(0, 12)])
+  expect((await reopen(disk, 'side-b')).model().fork).toBeNull()
+  expect(expectOk(await newTree(ctx, { name: 'side-b', at: '#4' }))).toContain('Opened tree side-b, from main at #4')
+  const taken = filesOf(disk, 'side-b')
   expect(taken).toHaveLength(5)
   expect(taken.slice(0, 4)).toEqual(main.slice(0, 4)) // the files are main's, the cut one made whole
-  expect(opsOf(disk, 'sql-v3')).toEqual(['start', 'add', 'add', 'add', 'fork'])
-  expect((await reopen(disk, 'sql-v3')).model().warningCount).toBe(0)
+  expect(opsOf(disk, 'side-b')).toEqual(['start', 'add', 'add', 'add', 'fork'])
+  expect((await reopen(disk, 'side-b')).model().warningCount).toBe(0)
 
   // an attempt that copied everything but the fork event, now asked for a shorter version: three files would be strays
   for (const file of main) put('short', file)
@@ -569,22 +569,22 @@ test('new tree: a copy that cannot be read through is not switched to and has no
   // reading one of main's events fails half way through the copy
   const bad = `${DIR}/events/${main[3]![0]}`
   disk.failing.add(bad)
-  expect(expectError(await newTree(ctx, { name: 'sql-v3' }))).toBe(`Cannot write the record: EIO: cannot read ${bad}`)
-  expect(expectError(await newTree(person, { name: 'sql-v3' }))).toBe(`写不进记录：EIO: cannot read ${bad}`)
-  expect(opsOf(disk, 'sql-v3')).not.toContain('fork')
+  expect(expectError(await newTree(ctx, { name: 'side-b' }))).toBe(`Cannot write the record: EIO: cannot read ${bad}`)
+  expect(expectError(await newTree(person, { name: 'side-b' }))).toBe(`写不进记录：EIO: cannot read ${bad}`)
+  expect(opsOf(disk, 'side-b')).not.toContain('fork')
   expect(disk.text(CONFIG)).toBe(configText)
   expect(JSON.parse(disk.text(CONFIG))).not.toHaveProperty('tree')
   // so the folder is a copy that stopped: not a tree to use, and the list says so
-  expect((await reopen(disk, 'sql-v3')).model().fork).toBeNull()
-  expect(expectError(await useTree(ctx, 'sql-v3'))).toBe('there is no tree named sql-v3; /decide tree lists them')
-  expect(expectOk(await treeList(ctx))).toContain('sql-v3  unfinished copy (no fork event yet)')
+  expect((await reopen(disk, 'side-b')).model().fork).toBeNull()
+  expect(expectError(await useTree(ctx, 'side-b'))).toBe('there is no tree named side-b; /decide tree lists them')
+  expect(expectOk(await treeList(ctx))).toContain('side-b  unfinished copy (no fork event yet)')
 
   // the disk comes back: the same request takes the folder over and finishes
   disk.failing.delete(bad)
-  expectOk(await newTree(ctx, { name: 'sql-v3' }))
-  expect(filesOf(disk, 'sql-v3').slice(0, 6)).toEqual(main)
-  expect(opsOf(disk, 'sql-v3').filter(op => op === 'fork')).toHaveLength(1)
-  expect(JSON.parse(disk.text(CONFIG)).tree).toBe('sql-v3')
+  expectOk(await newTree(ctx, { name: 'side-b' }))
+  expect(filesOf(disk, 'side-b').slice(0, 6)).toEqual(main)
+  expect(opsOf(disk, 'side-b').filter(op => op === 'fork')).toHaveLength(1)
+  expect(JSON.parse(disk.text(CONFIG)).tree).toBe('side-b')
 
   // a copy that did not throw but did not land either is caught by looking at what is there afterwards
   const lossy = new LossyDisk()
@@ -594,7 +594,7 @@ test('new tree: a copy that cannot be read through is not switched to and has no
   const incomplete = 'copying the events did not finish, so nothing was switched; try again'
   expect(expectError(await newTree(lossyProject.ctx, { name: 'later' }))).toBe(incomplete)
   expect(expectError(await newTree(lossyProject.make(lossyProject.journal, 'user', 'zh'), { name: 'later' }))).toBe(
-    '复制事件没有做完，没有切换；请再试一次',
+    '复制 event 没有做完，没有切换；请再试一次',
   )
   expect(namesOf(lossy, 'later')).toHaveLength(5)
   expect(opsOf(lossy, 'later')).not.toContain('fork')
@@ -609,18 +609,18 @@ test('new tree: a copy that cannot be read through is not switched to and has no
 
 test('use tree: points config.json at an existing tree, and main removes the pointer', async () => {
   const { disk, ctx } = await project()
-  expectOk(await newTree(ctx, { name: 'sql-v3', stay: true }))
+  expectOk(await newTree(ctx, { name: 'side-b', stay: true }))
   expectOk(await newTree(ctx, { name: 'other-one', empty: true, stay: true }))
   // a key that a newer version of the mod added is not lost on the way
   const base = { ...JSON.parse(disk.text(CONFIG)), futureKey: { a: 1 } }
   disk.put(CONFIG, `${JSON.stringify(base, null, 2)}\n`)
 
-  const r = await useTree(ctx, 'sql-v3')
-  expect(expectOk(r)).toBe('Recording in tree sql-v3 now.')
-  expect(r.ok ? r.id : undefined).toBe('sql-v3')
-  expect(JSON.parse(disk.text(CONFIG))).toEqual({ ...base, tree: 'sql-v3' })
+  const r = await useTree(ctx, 'side-b')
+  expect(expectOk(r)).toBe('Recording in tree side-b now.')
+  expect(r.ok ? r.id : undefined).toBe('side-b')
+  expect(JSON.parse(disk.text(CONFIG))).toEqual({ ...base, tree: 'side-b' })
   const parsed = parseConfig(disk.text(CONFIG))
-  expect('config' in parsed ? parsed.config.tree : 'unreadable').toBe('sql-v3')
+  expect('config' in parsed ? parsed.config.tree : 'unreadable').toBe('side-b')
 
   // from one tree to another, the name made into one as when a tree is opened
   expect(expectOk(await useTree(ctx, ' Other One '))).toBe('Recording in tree other-one now.')
@@ -649,7 +649,7 @@ test('use tree: one that does not exist, and one that is only half a copy, are r
   expect(expectError(await useTree(ctx, 'half'))).toBe('there is no tree named half; /decide tree lists them')
   // what is not a name at all gets the same answer, with the text as it was typed
   expect(expectError(await useTree(ctx, ' 第三版 '))).toBe('there is no tree named 第三版; /decide tree lists them')
-  expect(expectError(await useTree(ctx, '   '))).toBe('a tree needs a name (letters, digits and hyphens, 2-32 characters, e.g. sql-v3)')
+  expect(expectError(await useTree(ctx, '   '))).toBe('a tree needs a name (letters, digits and hyphens, 2-32 characters, e.g. crdt-engine)')
   // none of that touched config.json
   expect(disk.text(CONFIG)).toBe(configText)
   expect(disk.writes.length).toBe(writes)
@@ -685,18 +685,18 @@ test('use tree: already there says so and writes nothing', async () => {
   expect(disk.text(CONFIG)).toBe(configText)
 
   // a tree that config.json names and this session is in
-  expectOk(await newTree(ctx, { name: 'sql-v3' }))
-  const inSql = make(journal.sibling('sql-v3'))
+  expectOk(await newTree(ctx, { name: 'side-b' }))
+  const inSql = make(journal.sibling('side-b'))
   writes = disk.writes.length
   const named = disk.text(CONFIG)
-  expect(expectOk(await useTree(inSql, 'sql-v3'))).toBe('Already recording in tree sql-v3.')
-  expect(expectOk(await useTree(inSql, 'SQL v3'))).toBe('Already recording in tree sql-v3.')
+  expect(expectOk(await useTree(inSql, 'side-b'))).toBe('Already recording in tree side-b.')
+  expect(expectOk(await useTree(inSql, 'Side B'))).toBe('Already recording in tree side-b.')
   expect(disk.writes.length).toBe(writes)
   expect(disk.text(CONFIG)).toBe(named)
 
   // a session that has not followed config.json yet is not "already" there: it is told it records there now
-  expect(expectOk(await useTree(ctx, 'sql-v3'))).toBe('Recording in tree sql-v3 now.')
-  expect(JSON.parse(disk.text(CONFIG)).tree).toBe('sql-v3')
+  expect(expectOk(await useTree(ctx, 'side-b'))).toBe('Recording in tree side-b now.')
+  expect(JSON.parse(disk.text(CONFIG)).tree).toBe('side-b')
 })
 
 // ---------------------------------------------------------------- list and log
@@ -706,9 +706,9 @@ test('tree list: main first, then the others, each with where it began and how b
   // a project with only main
   expect(expectOk(await treeList(ctx))).toBe(['Trees in this project (recording in main):', '* main  5 nodes, 6 events'].join('\n'))
 
-  expectOk(await newTree(ctx, { name: 'sql-v3', at: '#4', title: 'SQL 第三版', stay: true }))
-  const inSql = make(journal.sibling('sql-v3'))
-  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'design-v2', status: 'planned' }))
+  expectOk(await newTree(ctx, { name: 'side-b', at: '#4', title: '另一条路线', stay: true }))
+  const inSql = make(journal.sibling('side-b'))
+  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'notes-app', status: 'planned' }))
   expectOk(await newTree(ctx, { name: 'tiny', at: '#2', stay: true }))
   expectOk(await newTree(ctx, { name: 'blank', empty: true, stay: true }))
   // a copy that stopped half way is listed too, as what it is
@@ -723,24 +723,24 @@ test('tree list: main first, then the others, each with where it began and how b
     '* main    4 nodes, 7 events',
     '  blank   started empty · 0 nodes, 1 event',
     '  half    unfinished copy (no fork event yet)',
-    `  sql-v3  from main at #4 (${when(T0 + 4 * MIN)}) · 4 nodes, 5 events · "SQL 第三版"`,
+    `  side-b  from main at #4 (${when(T0 + 4 * MIN)}) · 4 nodes, 5 events · "另一条路线"`,
     `  tiny    from main at #2 (${when(T0 + 2 * MIN)}) · 1 node, 2 events`,
   ])
 
   // the star is on the tree the session is in
   const fromSql = expectOk(await treeList(inSql)).split('\n')
-  expect(fromSql[0]).toBe('Trees in this project (recording in sql-v3):')
+  expect(fromSql[0]).toBe('Trees in this project (recording in side-b):')
   expect(fromSql.filter(line => line.startsWith('*'))).toEqual([list[4]!.replace(/^ /, '*')])
-  expect(fromSql.slice(1).map(line => line.slice(2, 8).trim())).toEqual(['main', 'blank', 'half', 'sql-v3', 'tiny'])
+  expect(fromSql.slice(1).map(line => line.slice(2, 8).trim())).toEqual(['main', 'blank', 'half', 'side-b', 'tiny'])
 })
 
 test('tree log: the last events, numbered, with who and what', async () => {
   const { disk, journal, ctx, make } = await project()
   const user = make(journal, 'user')
-  expectOk(await updateNode(user, { id: 'dbpool-adopted', status: 'rejected' }))
-  expectOk(await noteNode(ctx, { id: 'v22-adopted', text: 'both seeds agree' }))
-  expectOk(await updateNode(user, { id: 'sql-next', parent: 'design-v2' }))
-  expectOk(await retractNode(ctx, 'v22-rerun', 'duplicate'))
+  expectOk(await updateNode(user, { id: 'sqlite-adopted', status: 'rejected' }))
+  expectOk(await noteNode(ctx, { id: 'merge-adopted', text: 'both seeds agree' }))
+  expectOk(await updateNode(user, { id: 'sql-next', parent: 'notes-app' }))
+  expectOk(await retractNode(ctx, 'merge-rerun', 'duplicate'))
   const names = namesOf(disk, 'main')
   expect(names).toHaveLength(10)
   const at = (k: number) => whenOfFile(names[k - 1]!)
@@ -749,15 +749,15 @@ test('tree log: the last events, numbered, with who and what', async () => {
   expect(all).toEqual([
     'Tree main: 10 events (use #N as --at):',
     ` #1  ${at(1)}  model   start`,
-    ` #2  ${at(2)}  model   add design-v2 "design v2 定稿"`,
-    ` #3  ${at(3)}  model   add dbpool-adopted "连接池采用"`,
-    ` #4  ${at(4)}  model   add v22-adopted "构建版本定为 v2.2"`,
-    ` #5  ${at(5)}  model   add v22-rerun "构建版本 v2.2 重跑"`,
+    ` #2  ${at(2)}  model   add notes-app "notes app 立项"`,
+    ` #3  ${at(3)}  model   add sqlite-adopted "存储层采用"`,
+    ` #4  ${at(4)}  model   add merge-adopted "合并规则定为 v1.2"`,
+    ` #5  ${at(5)}  model   add merge-rerun "合并规则 v1.2 重跑"`,
     ` #6  ${at(6)}  model   add sql-next "下一步做 sql"`,
-    ` #7  ${at(7)}  user    update dbpool-adopted status rejected`,
-    ` #8  ${at(8)}  model   note v22-adopted`,
-    ` #9  ${at(9)}  user    move sql-next → design-v2`,
-    `#10  ${at(10)}  model   retract v22-rerun`,
+    ` #7  ${at(7)}  user    update sqlite-adopted status rejected`,
+    ` #8  ${at(8)}  model   note merge-adopted`,
+    ` #9  ${at(9)}  user    move sql-next → notes-app`,
+    `#10  ${at(10)}  model   retract merge-rerun`,
   ])
   expect(at(1)).toBe(when(T0 + MIN)) // the first event is the first minute of the clock
 
@@ -770,23 +770,23 @@ test('tree log: the last events, numbered, with who and what', async () => {
   const twelve = expectOk(await treeLog(ctx, null)).split('\n')
   expect(twelve[0]).toBe('Tree main: 14 events; the last 12 (use #N as --at):')
   expect(twelve).toHaveLength(13)
-  expect(twelve[1]).toMatch(/^ #3 {2}\d\d-\d\d \d\d:\d\d {2}model {3}add dbpool-adopted/)
+  expect(twelve[1]).toMatch(/^ #3 {2}\d\d-\d\d \d\d:\d\d {2}model {3}add sqlite-adopted/)
   expect(twelve.at(-1)).toMatch(/^#14 {2}\d\d-\d\d \d\d:\d\d {2}model {3}note sql-next$/)
   expect(expectOk(await treeLog(ctx, 0)).split('\n')).toHaveLength(2)
   expect(expectOk(await treeLog(ctx, 500)).split('\n')[0]).toBe('Tree main: 14 events (use #N as --at):')
 
   // a tree opened from another says where from; the fork marker itself is no event and has no number
-  expectOk(await newTree(ctx, { name: 'sql-v3', at: '#4' }))
-  const inSql = make(journal.sibling('sql-v3'), 'user')
-  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'design-v2', status: 'planned' }))
-  const own = namesOf(disk, 'sql-v3')
+  expectOk(await newTree(ctx, { name: 'side-b', at: '#4' }))
+  const inSql = make(journal.sibling('side-b'), 'user')
+  expectOk(await recordNode(inSql, { id: 'sql-first', title: 'SQL first try', parent: 'notes-app', status: 'planned' }))
+  const own = namesOf(disk, 'side-b')
   expect(expectOk(await treeLog(inSql, null)).split('\n')).toEqual([
-    'Tree sql-v3: 5 events (use #N as --at):',
+    'Tree side-b: 5 events (use #N as --at):',
     `opened from main at #4 (${at(4)})`,
     `#1  ${at(1)}  model   start`,
-    `#2  ${at(2)}  model   add design-v2 "design v2 定稿"`,
-    `#3  ${at(3)}  model   add dbpool-adopted "连接池采用"`,
-    `#4  ${at(4)}  model   add v22-adopted "构建版本定为 v2.2"`,
+    `#2  ${at(2)}  model   add notes-app "notes app 立项"`,
+    `#3  ${at(3)}  model   add sqlite-adopted "存储层采用"`,
+    `#4  ${at(4)}  model   add merge-adopted "合并规则定为 v1.2"`,
     `#5  ${whenOfFile(own[5]!)}  user    add sql-first "SQL first try"`,
   ])
 
@@ -802,28 +802,28 @@ test('tree log and the receipts are in Chinese for the person and English for th
   const at4 = when(T0 + 4 * MIN)
 
   // opening a tree
-  expect(expectOk(await newTree(person, { name: 'sql-v3', at: '#4', title: 'SQL 第三版', stay: true }))).toBe(
-    `已新开 tree「sql-v3」，基于 main 的 #4（${at4}）：3 个节点。仍在记录到「main」；/decide tree use sql-v3 可以切换。`,
+  expect(expectOk(await newTree(person, { name: 'side-b', at: '#4', title: '另一条路线', stay: true }))).toBe(
+    `已新开 tree「side-b」，基于 main 的 #4（${at4}）：3 个 node。仍在记录到「main」；/decide tree use side-b 可以切换。`,
   )
-  expect(expectOk(await newTree(model, { name: 'sql-v4', at: '#4', stay: true }))).toBe(
-    `Opened tree sql-v4, from main at #4 (${at4}): 3 nodes. Still recording in main; /decide tree use sql-v4 switches.`,
+  expect(expectOk(await newTree(model, { name: 'side-c', at: '#4', stay: true }))).toBe(
+    `Opened tree side-c, from main at #4 (${at4}): 3 nodes. Still recording in main; /decide tree use side-c switches.`,
   )
   expect(expectOk(await newTree(person, { name: 'blank', empty: true, stay: true }))).toBe(
-    '已新开 tree「blank」，从空白开始：0 个节点。仍在记录到「main」；/decide tree use blank 可以切换。',
+    '已新开 tree「blank」，从空白开始：0 个 node。仍在记录到「main」；/decide tree use blank 可以切换。',
   )
   expect(expectOk(await newTree(model, { name: 'empty', empty: true, stay: true }))).toBe(
     'Opened tree empty, started empty: 0 nodes. Still recording in main; /decide tree use empty switches.',
   )
   // switching, and being there already
-  expect(expectOk(await useTree(person, 'sql-v3'))).toBe('现在记录到 tree「sql-v3」。')
-  expect(expectOk(await useTree(model, 'sql-v3'))).toBe('Recording in tree sql-v3 now.')
-  expect(expectOk(await useTree(make(journal.sibling('sql-v3'), 'user'), 'sql-v3'))).toBe('已经在记录到 tree「sql-v3」。')
-  expect(expectOk(await useTree(make(journal.sibling('sql-v3'), 'model'), 'sql-v3'))).toBe('Already recording in tree sql-v3.')
+  expect(expectOk(await useTree(person, 'side-b'))).toBe('现在记录到 tree「side-b」。')
+  expect(expectOk(await useTree(model, 'side-b'))).toBe('Recording in tree side-b now.')
+  expect(expectOk(await useTree(make(journal.sibling('side-b'), 'user'), 'side-b'))).toBe('已经在记录到 tree「side-b」。')
+  expect(expectOk(await useTree(make(journal.sibling('side-b'), 'model'), 'side-b'))).toBe('Already recording in tree side-b.')
 
   // what is refused
   expect(expectError(await newTree(person, { name: 'main' }))).toBe('"main" 是项目的第一棵 tree，请换个名字')
   expect(expectError(await newTree(model, { name: 'main' }))).toBe('"main" is the first tree of the project; pick another name')
-  expect(expectError(await newTree(person, { name: 'next-one', at: '#99' }))).toBe('没有 #99 这个版本：「main」一共 6 个事件（#1 到 #6）')
+  expect(expectError(await newTree(person, { name: 'next-one', at: '#99' }))).toBe('没有 #99 这个 version：「main」一共 6 个 event（#1 到 #6）')
   expect(expectError(await newTree(model, { name: 'next-one', at: '#99' }))).toBe(
     'there is no version #99: main has 6 events (#1 to #6)',
   )
@@ -834,31 +834,31 @@ test('tree log and the receipts are in Chinese for the person and English for th
   disk.put(`${eventsDirOf('half')}/${filesOf(disk, 'main')[0]![0]}`, filesOf(disk, 'main')[0]![1])
   const zhList = expectOk(await treeList(person)).split('\n')
   expect(zhList[0]).toBe('这个项目的 tree（正在记录到「main」）：')
-  expect(zhList[1]).toBe('* main    5 个节点，6 个事件')
-  expect(zhList).toContain('  blank   从空白开始 · 0 个节点，1 个事件')
-  expect(zhList).toContain('  half    没做完的复制（还没有 fork 事件）')
-  expect(zhList).toContain(`  sql-v3  基于 main 的 #4（${at4}） · 3 个节点，4 个事件 · "SQL 第三版"`)
+  expect(zhList[1]).toBe('* main    5 个 node，6 个 event')
+  expect(zhList).toContain('  blank   从空白开始 · 0 个 node，1 个 event')
+  expect(zhList).toContain('  half    没做完的复制（还没有 fork event）')
+  expect(zhList).toContain(`  side-b  基于 main 的 #4（${at4}） · 3 个 node，4 个 event · "另一条路线"`)
   const enList = expectOk(await treeList(model)).split('\n')
   expect(enList[0]).toBe('Trees in this project (recording in main):')
   expect(enList[1]).toBe('* main    5 nodes, 6 events')
   expect(enList).toContain('  blank   started empty · 0 nodes, 1 event')
   expect(enList).toContain('  half    unfinished copy (no fork event yet)')
-  expect(enList).toContain(`  sql-v3  from main at #4 (${at4}) · 3 nodes, 4 events · "SQL 第三版"`)
+  expect(enList).toContain(`  side-b  from main at #4 (${at4}) · 3 nodes, 4 events · "另一条路线"`)
 
   // the log: the sentences around it are translated, the events in it (who and what) are not
-  const inSql = (a: DtActor) => make(journal.sibling('sql-v3'), a)
+  const inSql = (a: DtActor) => make(journal.sibling('side-b'), a)
   const zhLog = expectOk(await treeLog(inSql('user'), 2)).split('\n')
   const enLog = expectOk(await treeLog(inSql('model'), 2)).split('\n')
-  expect(zhLog[0]).toBe('Tree「sql-v3」：共 4 个事件，最近 2 个（--at 里写 #N）：')
+  expect(zhLog[0]).toBe('Tree「side-b」：共 4 个 event，最近 2 个（--at 里写 #N）：')
   expect(zhLog[1]).toBe(`开出时基于 main 的 #4（${at4}）`)
-  expect(enLog[0]).toBe('Tree sql-v3: 4 events; the last 2 (use #N as --at):')
+  expect(enLog[0]).toBe('Tree side-b: 4 events; the last 2 (use #N as --at):')
   expect(enLog[1]).toBe(`opened from main at #4 (${at4})`)
   expect(zhLog.slice(2)).toEqual(enLog.slice(2))
   expect(enLog.slice(2)).toEqual([
-    `#3  ${when(T0 + 3 * MIN)}  model   add dbpool-adopted "连接池采用"`,
-    `#4  ${at4}  model   add v22-adopted "构建版本定为 v2.2"`,
+    `#3  ${when(T0 + 3 * MIN)}  model   add sqlite-adopted "存储层采用"`,
+    `#4  ${at4}  model   add merge-adopted "合并规则定为 v1.2"`,
   ])
-  expect(expectOk(await treeLog(make(journal.sibling('later-on'), 'user'), null))).toBe('Tree「later-on」还没有事件。')
+  expect(expectOk(await treeLog(make(journal.sibling('later-on'), 'user'), null))).toBe('Tree「later-on」还没有 event。')
   expect(expectOk(await treeLog(make(journal.sibling('later-on'), 'model'), null))).toBe('Tree later-on has no events yet.')
-  expect(expectOk(await treeLog(person, null)).split('\n')[0]).toBe('Tree「main」：共 6 个事件（--at 里写 #N）：')
+  expect(expectOk(await treeLog(person, null)).split('\n')[0]).toBe('Tree「main」：共 6 个 event（--at 里写 #N）：')
 })

@@ -28,10 +28,10 @@ function history(): { list: Entry[]; nodes: DtNode[] } {
   const list: Entry[] = [{ name: eventFileName(T0 + MIN, 'abcdef', 0), event: ev('start', T0 + MIN) }]
   const nodes: DtNode[] = []
   const adds: [string, string][] = [
-    ['design-v2', 'design v2 定稿'],
-    ['dbpool-adopted', '连接池采用'],
-    ['v22-adopted', '构建版本定为 v2.2'],
-    ['v22-rerun', '构建版本 v2.2 重跑'],
+    ['notes-app', 'notes app 立项'],
+    ['sqlite-adopted', '存储层采用'],
+    ['merge-adopted', '合并规则定为 v1.2'],
+    ['merge-rerun', '合并规则 v1.2 重跑'],
     ['sql-next', '下一步做 sql'],
   ]
   adds.forEach(([id, title], i) => {
@@ -127,7 +127,7 @@ test('versions: the end of what a time covers, and the odd cases', () => {
   expect(parseWhen('2026-02-30', now)).toBeNull()
   expect(parseWhen('2026-13-01', now)).toBeNull()
   expect(parseWhen('2026-10-08 25:00', now)).toBeNull()
-  expect(parseWhen('v22-adopted', now)).toBeNull()
+  expect(parseWhen('merge-adopted', now)).toBeNull()
   expect(parseWhen('2.2', now)).toBeNull()
 })
 
@@ -146,17 +146,17 @@ test('versions: the stamp in an event file name, whole or cut short', () => {
 })
 
 test('versions: a node is the tree as it was when that node was recorded', () => {
-  expect(count('design-v2')).toBe(2)
-  expect(count('v22-adopted')).toBe(4)
-  expect(count('node:v22-adopted')).toBe(4)
-  expect(count('节点：design-v2')).toBe(2)
+  expect(count('notes-app')).toBe(2)
+  expect(count('merge-adopted')).toBe(4)
+  expect(count('node:merge-adopted')).toBe(4)
+  expect(count('节点：notes-app')).toBe(2)
   // a piece of the title
-  expect(count('连接池')).toBe(3)
-  expect(count('定稿')).toBe(2)
+  expect(count('存储层')).toBe(3)
+  expect(count('立项')).toBe(2)
   // more than one node
-  expect(at('v22')).toMatchObject({ ok: false, error: 'ambiguous', ref: 'v22' })
-  const amb = at('v22')
-  expect(amb.ok === false && amb.error === 'ambiguous' && amb.ids.sort()).toEqual(['v22-adopted', 'v22-rerun'])
+  expect(at('merge')).toMatchObject({ ok: false, error: 'ambiguous', ref: 'merge' })
+  const amb = at('merge')
+  expect(amb.ok === false && amb.error === 'ambiguous' && amb.ids.sort()).toEqual(['merge-adopted', 'merge-rerun'])
   // nothing
   expect(at('no such thing')).toMatchObject({ ok: false, error: 'unknown', spec: 'no such thing' })
   expect(at('node:nothing')).toMatchObject({ ok: false, error: 'unknown' })
@@ -178,7 +178,7 @@ test('versions: the fork marker is not counted', () => {
 
 test('describeEvent: one short phrase per event', () => {
   expect(describeEvent(H.list[0]!.event)).toBe('start')
-  expect(describeEvent(H.list[1]!.event)).toBe('add design-v2 "design v2 定稿"')
+  expect(describeEvent(H.list[1]!.event)).toBe('add notes-app "notes app 立项"')
   expect(describeEvent(ev('update', T0, { id: 'a-node', patch: { status: 'rejected', summary: 'x' } }))).toBe('update a-node status rejected')
   expect(describeEvent(ev('update', T0, { id: 'a-node', patch: { summary: 'x', rationale: 'y' } }))).toBe('update a-node summary, rationale')
   expect(describeEvent(ev('update', T0, { id: 'a-node', patch: { addEvidence: [] } }))).toBe('update a-node addEvidence')

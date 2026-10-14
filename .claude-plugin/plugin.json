@@ -1,6 +1,6 @@
 {
   "name": "decision-tree",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Records a project's decisions as a tree and shows it in a docked pane.",
   "types": "./types/index.d.ts",
   "author": {
